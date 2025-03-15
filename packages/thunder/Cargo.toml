@@ -1,0 +1,13 @@
+[package]
+name = "thunder"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+v8 = "135.0.0"
+blitz-traits = { path = "../blitz-traits" }
+blitz-dom = { path = "../blitz-dom" }
+
+html5ever = { workspace = true }
+url = { workspace = true }

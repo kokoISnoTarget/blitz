@@ -1,0 +1,106 @@
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    pin::Pin,
+    rc::Rc,
+};
+
+use crate::wrappers::Document as WrapperDocument;
+use crate::wrappers::Element;
+use blitz_dom::BaseDocument;
+use blitz_traits::{Document, Viewport};
+use v8::{
+    Context, ContextOptions, ContextScope, CreateParams, Exception, FunctionCallbackArguments,
+    FunctionTemplate, HandleScope, Isolate, ObjectTemplate, OwnedIsolate, ReturnValue,
+    cppgc::{Heap, make_garbage_collected, shutdown_process},
+};
+
+pub struct JsDocument {
+    pub isolate: OwnedIsolate,
+}
+
+impl Document for JsDocument {
+    type Doc = BaseDocument;
+
+    fn handle_event(&mut self, _event: &mut blitz_traits::DomEvent) {}
+
+    fn id(&self) -> usize {
+        self.as_ref().id()
+    }
+
+    fn poll(&mut self, _cx: std::task::Context) -> bool {
+        // Default implementation does nothing
+        false
+    }
+}
+impl From<JsDocument> for BaseDocument {
+    fn from(mut js_doc: JsDocument) -> BaseDocument {
+        js_doc.isolate.remove_slot::<BaseDocument>().unwrap()
+    }
+}
+impl AsRef<BaseDocument> for JsDocument {
+    fn as_ref(&self) -> &BaseDocument {
+        self.isolate.get_slot::<BaseDocument>().unwrap()
+    }
+}
+impl AsMut<BaseDocument> for JsDocument {
+    fn as_mut(&mut self) -> &mut BaseDocument {
+        self.isolate.get_slot_mut::<BaseDocument>().unwrap()
+    }
+}
+
+impl JsDocument {
+    pub fn new() -> Self {
+        let document = BaseDocument::new(Viewport::default());
+
+        let mut isolate = Isolate::new(CreateParams::default());
+        isolate.set_slot(document);
+
+        Self { isolate }
+    }
+
+    pub fn setup(&mut self) {
+        let handle_scope = &mut HandleScope::new(&mut self.isolate);
+
+        let context = Context::new(handle_scope, ContextOptions::default());
+
+        let scope = &mut ContextScope::new(handle_scope, context);
+
+        let name = v8::String::new(scope, "document").unwrap();
+        let wrapper_doc = WrapperDocument::new().object(scope).into();
+
+        let global = context.global(scope);
+        global.set(scope, name.into(), wrapper_doc).unwrap();
+
+        let source = v8::String::new(
+            scope,
+            r#"
+            console.log(document.querySelector('body'));
+            "#,
+        )
+        .unwrap();
+        execute_script(scope, source);
+    }
+}
+
+fn execute_script(
+    context_scope: &mut v8::ContextScope<v8::HandleScope>,
+    script: v8::Local<v8::String>,
+) {
+    let scope = &mut v8::HandleScope::new(context_scope);
+    let try_catch = &mut v8::TryCatch::new(scope);
+
+    let script = v8::Script::compile(try_catch, script, None).expect("failed to compile script");
+
+    if script.run(try_catch).is_none() {
+        let exception_string = try_catch
+            .stack_trace()
+            .or_else(|| try_catch.exception())
+            .map_or_else(
+                || "no stack trace".into(),
+                |value| value.to_rust_string_lossy(try_catch),
+            );
+
+        panic!("{exception_string}");
+    }
+}

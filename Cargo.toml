@@ -1,17 +1,18 @@
 [workspace]
 members = [
-  "packages/blitz-traits",
-  "packages/blitz-dom",
-  "packages/blitz-html",
-  "packages/blitz-net",
-  "packages/blitz-renderer-vello",
-  "packages/blitz-shell",
-  "packages/blitz",
-  "packages/dioxus-native",
-  "packages/stylo_taffy",
-  "apps/wpt",
-  "apps/readme",
-  "examples/counter",
+    "packages/blitz-traits",
+    "packages/blitz-dom",
+    "packages/blitz-html",
+    "packages/thunder",
+    "packages/blitz-net",
+    "packages/blitz-renderer-vello",
+    "packages/blitz-shell",
+    "packages/blitz",
+    "packages/dioxus-native",
+    "packages/stylo_taffy",
+    "apps/wpt",
+    "apps/readme",
+    "examples/counter",
 ]
 exclude = ["sites"]
 resolver = "2"
@@ -49,7 +50,7 @@ color = "0.2"
 peniko = "0.3"
 parley = "0.3"
 wgpu = "23"
-vello = { version = "0.4", features = [ "wgpu" ] }
+vello = { version = "0.4", features = ["wgpu"] }
 vello_svg = { version = "0.6" }
 usvg = "0.44.0"
 
