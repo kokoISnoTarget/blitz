@@ -5869,8 +5869,11 @@ dependencies = [
  "blitz-dom",
  "blitz-traits",
  "html5ever",
+ "tracing",
+ "tracing-subscriber",
  "url",
  "v8",
+ "xml5ever",
 ]
 
 [[package]]

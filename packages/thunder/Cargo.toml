@@ -10,4 +10,13 @@ blitz-traits = { path = "../blitz-traits" }
 blitz-dom = { path = "../blitz-dom" }
 
 html5ever = { workspace = true }
+xml5ever = { workspace = true }
 url = { workspace = true }
+
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { optional = true, version = "*" }
+
+# Features
+[features]
+default = ["tracing"]
+tracing = ["dep:tracing", "dep:tracing-subscriber"]

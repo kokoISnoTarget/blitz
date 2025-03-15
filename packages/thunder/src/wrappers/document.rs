@@ -1,7 +1,6 @@
-use blitz_dom::BaseDocument;
-use v8::{FunctionCallbackArguments, HandleScope, ReturnValue, cppgc::GarbageCollected};
+use std::ops::DerefMut;
 
-use super::Element;
+use super::*;
 
 pub struct Document;
 impl Document {
@@ -9,12 +8,13 @@ impl Document {
         Document
     }
     pub fn object<'a>(self, scope: &mut HandleScope<'a>) -> v8::Local<'a, v8::Object> {
+        #[cfg(feature = "tracing")]
+        tracing::trace!("Document::object");
+
         let obj = v8::Object::new(scope);
-        let name = v8::String::new(scope, "querySelector").unwrap();
 
-        let func = v8::Function::new(scope, Self::query_selector).unwrap();
+        add_method(scope, &obj, "querySelector", Document::query_selector);
 
-        obj.set(scope, name.into(), func.into()).unwrap();
         obj
     }
     fn query_selector(
@@ -22,6 +22,9 @@ impl Document {
         args: FunctionCallbackArguments,
         mut rv: ReturnValue,
     ) {
+        #[cfg(feature = "tracing")]
+        tracing::trace!("Document::query_selector");
+
         let arg = args.get(0);
         let Some(str) = arg.to_string(scope) else {
             return;

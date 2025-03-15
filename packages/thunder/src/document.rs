@@ -5,8 +5,8 @@ use std::{
     rc::Rc,
 };
 
-use crate::wrappers::Document as WrapperDocument;
-use crate::wrappers::Element;
+use crate::wrappers::{self, Document as WrapperDocument};
+use crate::wrappers::{Element, Templates};
 use blitz_dom::BaseDocument;
 use blitz_traits::{Document, Viewport};
 use v8::{
@@ -50,12 +50,12 @@ impl AsMut<BaseDocument> for JsDocument {
 }
 
 impl JsDocument {
-    pub fn new() -> Self {
+    pub fn new(mut isolate: OwnedIsolate) -> Self {
         let document = BaseDocument::new(Viewport::default());
+        let templates = Templates::new();
 
-        let mut isolate = Isolate::new(CreateParams::default());
         isolate.set_slot(document);
-
+        isolate.set_slot(templates);
         Self { isolate }
     }
 
@@ -72,10 +72,14 @@ impl JsDocument {
         let global = context.global(scope);
         global.set(scope, name.into(), wrapper_doc).unwrap();
 
+        #[cfg(feature = "tracing")]
+        tracing::info!("Set global scope");
+
         let source = v8::String::new(
             scope,
             r#"
-            console.log(document.querySelector('body'));
+            let body = document.querySelector('body');
+            body.remove();
             "#,
         )
         .unwrap();
@@ -88,19 +92,36 @@ fn execute_script(
     script: v8::Local<v8::String>,
 ) {
     let scope = &mut v8::HandleScope::new(context_scope);
-    let try_catch = &mut v8::TryCatch::new(scope);
+    let mut try_catch = v8::TryCatch::new(scope);
 
-    let script = v8::Script::compile(try_catch, script, None).expect("failed to compile script");
+    let script =
+        v8::Script::compile(&mut try_catch, script, None).expect("failed to compile script");
 
-    if script.run(try_catch).is_none() {
+    let result = script.run(&mut try_catch);
+    let Some(result) = result else {
         let exception_string = try_catch
             .stack_trace()
             .or_else(|| try_catch.exception())
             .map_or_else(
                 || "no stack trace".into(),
-                |value| value.to_rust_string_lossy(try_catch),
+                |value| value.to_rust_string_lossy(&mut try_catch),
             );
 
         panic!("{exception_string}");
+    };
+    #[cfg(feature = "tracing")]
+    tracing::info!("Executed script");
+}
+
+impl Deref for JsDocument {
+    type Target = BaseDocument;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+impl DerefMut for JsDocument {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_mut()
     }
 }

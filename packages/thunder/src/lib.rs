@@ -1,3 +1,5 @@
+#![feature(generic_const_exprs)]
+
 mod document;
 mod html;
 mod wrappers;

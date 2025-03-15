@@ -1,13 +1,30 @@
 use std::{
     borrow::Cow,
-    cell::{Ref, RefCell},
+    cell::{Ref, RefCell, RefMut},
+    collections::HashSet,
 };
 
 use crate::document::JsDocument;
-use blitz_dom::node::Attribute;
-use html5ever::QualName;
-use html5ever::interface::{ElementFlags, TreeSink};
+use blitz_dom::{
+    BaseDocument, ElementNodeData, Node, NodeData, local_name,
+    net::{CssHandler, ImageHandler, Resource},
+    node::Attribute,
+    util::ImageType,
+};
+use blitz_traits::net::{Request, SharedProvider};
+use html5ever::{
+    ParseOpts, QualName,
+    interface::{NodeOrText, QuirksMode},
+    tendril::TendrilSink,
+    tokenizer::{BufferQueue, TokenSink, Tokenizer, TokenizerResult},
+    tree_builder::TreeBuilder,
+};
+use html5ever::{
+    interface::{ElementFlags, TreeSink},
+    tendril::StrTendril,
+};
 use url::Url;
+use xml5ever::tendril::{fmt::UTF8, stream::Utf8LossyDecoder};
 
 /// Convert an html5ever Attribute which uses tendril for its value to a blitz Attribute
 /// which uses String.
@@ -19,26 +36,176 @@ fn html5ever_to_blitz_attr(attr: html5ever::Attribute) -> Attribute {
 }
 
 pub struct HtmlParser<'a> {
-    js_doc: RefCell<&'a mut JsDocument>,
+    pub tokenizer: Tokenizer<TreeBuilder<usize, HtmlSink<'a>>>,
+    pub input_buffer: BufferQueue,
+}
+impl TendrilSink<UTF8> for HtmlParser<'_> {
+    fn process(&mut self, t: StrTendril) {
+        self.input_buffer.push_back(t);
+        while let TokenizerResult::Script(script_node_id) = self.tokenizer.feed(&self.input_buffer)
+        {
+            dbg!(script_node_id);
+            self.tokenizer.sink.sink.add_script(script_node_id);
+        }
+    }
+
+    // FIXME: Is it too noisy to report every character decoding error?
+    fn error(&mut self, desc: Cow<'static, str>) {
+        self.tokenizer.sink.sink.parse_error(desc)
+    }
+
+    type Output = ();
+
+    fn finish(mut self) -> Self::Output {
+        while let TokenizerResult::Script(script_node_id) = self.tokenizer.feed(&self.input_buffer)
+        {
+            dbg!(script_node_id);
+            self.tokenizer.sink.sink.add_script(script_node_id);
+        }
+        assert!(self.input_buffer.is_empty());
+        self.tokenizer.end();
+        self.tokenizer.sink.sink.finish()
+    }
+}
+impl HtmlParser<'_> {
+    pub fn parse(doc: &mut JsDocument, html: &str) {
+        let sink = HtmlSink::new(doc);
+
+        let opts = ParseOpts::default();
+
+        let tb = TreeBuilder::new(sink, opts.tree_builder);
+        let tok = Tokenizer::new(tb, opts.tokenizer);
+
+        let parser = HtmlParser {
+            tokenizer: tok,
+            input_buffer: BufferQueue::default(),
+        };
+
+        Utf8LossyDecoder::new(parser)
+            .read_from(&mut html.as_bytes())
+            .unwrap()
+    }
+}
+pub struct HtmlSink<'a> {
+    doc: RefCell<&'a mut JsDocument>,
+    doc_id: usize,
+    net_provider: SharedProvider<Resource>,
 }
 
-impl<'a> HtmlParser<'a> {
-    pub fn new(js_doc: &'a mut JsDocument) -> Self {
-        HtmlParser {
-            js_doc: RefCell::new(js_doc),
+impl<'a> HtmlSink<'a> {
+    fn new(doc: &'a mut JsDocument) -> Self {
+        let doc_id = doc.id();
+        let net_provider = doc.net_provider.clone();
+        HtmlSink {
+            doc: RefCell::new(doc),
+            doc_id,
+            net_provider,
+        }
+    }
+    fn add_script(&mut self, script_node_id: usize) {
+        self.doc.borrow().debug_log_node(script_node_id);
+    }
+
+    #[track_caller]
+    fn create_node(&self, node_data: NodeData) -> usize {
+        self.doc.borrow_mut().create_node(node_data)
+    }
+
+    #[track_caller]
+    fn create_text_node(&self, text: &str) -> usize {
+        self.doc.borrow_mut().create_text_node(text)
+    }
+
+    #[track_caller]
+    fn node(&self, id: usize) -> Ref<Node> {
+        Ref::map(self.doc.borrow(), |doc| &doc.nodes[id])
+    }
+
+    #[track_caller]
+    fn node_mut(&self, id: usize) -> RefMut<Node> {
+        RefMut::map(self.doc.borrow_mut(), |doc| &mut doc.nodes[id])
+    }
+
+    fn try_append_text_to_text_node(&self, node_id: Option<usize>, text: &str) -> bool {
+        let Some(node_id) = node_id else {
+            return false;
+        };
+        let mut node = self.node_mut(node_id);
+
+        match node.text_data_mut() {
+            Some(data) => {
+                data.content += text;
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn last_child(&self, parent_id: usize) -> Option<usize> {
+        self.node(parent_id).children.last().copied()
+    }
+
+    fn load_linked_stylesheet(&self, target_id: usize) {
+        let node = self.node(target_id);
+
+        let rel_attr = node.attr(local_name!("rel"));
+        let href_attr = node.attr(local_name!("href"));
+
+        if let (Some("stylesheet"), Some(href)) = (rel_attr, href_attr) {
+            let url = self.doc.borrow().resolve_url(href);
+            self.net_provider.fetch(
+                self.doc_id,
+                Request::get(url.clone()),
+                Box::new(CssHandler {
+                    node: target_id,
+                    source_url: url,
+                    guard: self.doc.borrow().guard.clone(),
+                    provider: self.net_provider.clone(),
+                }),
+            );
+        }
+    }
+
+    fn load_image(&self, target_id: usize) {
+        let node = self.node(target_id);
+        if let Some(raw_src) = node.attr(local_name!("src")) {
+            if !raw_src.is_empty() {
+                let src = self.doc.borrow().resolve_url(raw_src);
+                self.doc.borrow().net_provider.fetch(
+                    self.doc.borrow().id(),
+                    Request::get(src),
+                    Box::new(ImageHandler::new(target_id, ImageType::Image)),
+                );
+            }
+        }
+    }
+
+    fn process_button_input(&self, target_id: usize) {
+        let node = self.node(target_id);
+        let Some(data) = node.element_data() else {
+            return;
+        };
+
+        let tagname = data.name.local.as_ref();
+        let type_attr = data.attr(local_name!("type"));
+        let value = data.attr(local_name!("value"));
+
+        // Add content of "value" attribute as a text node child if:
+        //   - Tag name is
+        if let ("input", Some("button" | "submit" | "reset"), Some(value)) =
+            (tagname, type_attr, value)
+        {
+            let value = value.to_string();
+            drop(node);
+            let id = self.create_text_node(&value);
+            self.append(&target_id, NodeOrText::AppendNode(id));
         }
     }
 }
 
-impl<'a> HtmlParser<'a> {
-    pub fn parse(&self, html: &str) {
-        // Parse HTML and populate the document
-    }
-}
-
 // This is from https://github.com/DioxusLabs/blitz/blob/36369ba285d7291b449d9d7770427fc895dc5221/packages/blitz-html/src/html_sink.rs
-impl<'b> TreeSink for HtmlParser<'b> {
-    type Output = &'b mut JsDocument;
+impl<'b> TreeSink for HtmlSink<'b> {
+    type Output = ();
 
     // we use the ID of the nodes in the tree as the handle
     type Handle = usize;
@@ -49,22 +216,20 @@ impl<'b> TreeSink for HtmlParser<'b> {
         Self: 'a;
 
     fn finish(self) -> Self::Output {
-        let doc = self.js_doc.into_inner();
-
         // Add inline stylesheets (<style> elements)
-        for id in self.style_nodes.borrow().iter() {
-            doc.process_style_element(*id);
-        }
+        //for id in self.style_nodes.borrow().iter() {
+        //    doc.process_style_element(*id);
+        //}
+        // TODO: Implement style processing
 
-        for error in self.errors.borrow().iter() {
-            println!("ERROR: {}", error);
-        }
-
-        doc
+        // for error in self.errors.borrow().iter() {
+        //     println!("ERROR: {}", error);
+        // }
     }
 
     fn parse_error(&self, msg: Cow<'static, str>) {
-        dbg!(msg);
+        #[cfg(feature = "tracing")]
+        tracing::error!("Parse error: {}", msg);
     }
 
     fn get_document(&self) -> Self::Handle {
@@ -72,7 +237,7 @@ impl<'b> TreeSink for HtmlParser<'b> {
     }
 
     fn elem_name<'a>(&'a self, target: &'a Self::Handle) -> Self::ElemName<'a> {
-        Ref::map(self.js_doc.borrow(), |doc| {
+        Ref::map(self.doc.borrow(), |doc| {
             &doc.as_ref().nodes[*target]
                 .element_data()
                 .expect("TreeSink::elem_name called on a node which is not an element!")
@@ -109,7 +274,10 @@ impl<'b> TreeSink for HtmlParser<'b> {
             "link" => self.load_linked_stylesheet(id),
             "img" => self.load_image(id),
             "input" => self.process_button_input(id),
-            "style" => self.style_nodes.borrow_mut().push(id),
+            "style" => {
+                todo!();
+                //self.style_nodes.borrow_mut().push(id)
+            }
             _ => {}
         }
 
@@ -195,11 +363,14 @@ impl<'b> TreeSink for HtmlParser<'b> {
 
     fn append_doctype_to_document(
         &self,
-        _name: StrTendril,
-        _public_id: StrTendril,
-        _system_id: StrTendril,
+        name: StrTendril,
+        public_id: StrTendril,
+        system_id: StrTendril,
     ) {
-        // Ignore. We don't care about the DOCTYPE for now.
+        #[cfg(feature = "tracing")]
+        tracing::warn!(
+            "Trying to append DOCTYPE to document, which is not supported yet. {name}, {public_id}, {system_id}."
+        );
     }
 
     fn get_template_contents(&self, target: &Self::Handle) -> Self::Handle {
@@ -212,7 +383,8 @@ impl<'b> TreeSink for HtmlParser<'b> {
     }
 
     fn set_quirks_mode(&self, mode: QuirksMode) {
-        self.quirks_mode.set(mode);
+        #[cfg(feature = "tracing")]
+        tracing::warn!("Trying to set quirks mode to {mode:?}, which is not supported yet.");
     }
 
     fn add_attrs_if_missing(&self, target: &Self::Handle, attrs: Vec<html5ever::Attribute>) {
