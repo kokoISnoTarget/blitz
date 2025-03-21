@@ -2,7 +2,7 @@
 
 mod document;
 mod html;
-mod wrappers;
+mod objects;
 
 pub use self::document::JsDocument;
 

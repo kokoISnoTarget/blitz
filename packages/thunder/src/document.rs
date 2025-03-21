@@ -5,8 +5,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::wrappers::{self, Document as WrapperDocument};
-use crate::wrappers::{Element, Templates};
+use crate::objects::{self, add_console, add_document};
 use blitz_dom::BaseDocument;
 use blitz_traits::{Document, Viewport};
 use v8::{
@@ -52,10 +51,8 @@ impl AsMut<BaseDocument> for JsDocument {
 impl JsDocument {
     pub fn new(mut isolate: OwnedIsolate) -> Self {
         let document = BaseDocument::new(Viewport::default());
-        let templates = Templates::new();
 
         isolate.set_slot(document);
-        isolate.set_slot(templates);
         Self { isolate }
     }
 
@@ -63,14 +60,10 @@ impl JsDocument {
         let handle_scope = &mut HandleScope::new(&mut self.isolate);
 
         let context = Context::new(handle_scope, ContextOptions::default());
-
         let scope = &mut ContextScope::new(handle_scope, context);
 
-        let name = v8::String::new(scope, "document").unwrap();
-        let wrapper_doc = WrapperDocument::new().object(scope).into();
-
-        let global = context.global(scope);
-        global.set(scope, name.into(), wrapper_doc).unwrap();
+        add_console(scope, &context);
+        add_document(scope, &context);
 
         #[cfg(feature = "tracing")]
         tracing::info!("Set global scope");
