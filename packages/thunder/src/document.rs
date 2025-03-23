@@ -56,6 +56,9 @@ impl JsDocument {
         Self { isolate }
     }
 
+    // Setup global scope
+    pub fn initialize(&mut self) {}
+
     pub fn setup(&mut self) {
         let handle_scope = &mut HandleScope::new(&mut self.isolate);
 
@@ -72,7 +75,7 @@ impl JsDocument {
             scope,
             r#"
             let body = document.querySelector('body');
-            body.remove();
+            console.log(body.remove());
             "#,
         )
         .unwrap();

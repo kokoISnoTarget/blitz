@@ -16,6 +16,9 @@ url = { workspace = true }
 tracing = { workspace = true, optional = true }
 tracing-subscriber = { optional = true, version = "*" }
 
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+
 # Features
 [features]
 default = ["tracing"]

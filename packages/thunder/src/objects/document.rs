@@ -2,7 +2,7 @@ use blitz_dom::BaseDocument;
 use html5ever::tokenizer::states::State::Doctype;
 use v8::{Context, Function, FunctionCallbackArguments, HandleScope, Local, Object, ReturnValue};
 
-use super::{add_function_to_object, element::Element};
+use super::{add_function_to_object, element::element_object};
 
 pub fn add_document(scope: &mut HandleScope<'_>, context: &Local<'_, Context>) {
     let document_name = v8::String::new(scope, "document").unwrap();
@@ -31,7 +31,7 @@ fn query_selector(
 
     match document.query_selector(&selector) {
         Ok(Some(query)) => {
-            let object = Element::new(query as u32).object(scope);
+            let object = element_object(scope, query as u32);
             retval.set(object.into());
         }
         Ok(None) => {

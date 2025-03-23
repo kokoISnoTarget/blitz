@@ -6,7 +6,8 @@ use v8::{
     cppgc::{Heap, HeapCreateParams},
 };
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     #[cfg(feature = "tracing")]
     {
         tracing_subscriber::fmt::init();
@@ -18,11 +19,30 @@ fn main() {
     v8::cppgc::initialize_process(platform.clone());
 
     let heap = Heap::create(platform, HeapCreateParams::default());
-    let mut isolate = Isolate::new(CreateParams::default().cpp_heap(heap));
+    let isolate = Isolate::new(CreateParams::default().cpp_heap(heap));
 
     let mut document = JsDocument::new(isolate);
 
-    HtmlParser::parse(&mut document, "<html><body></body></html>");
+    tokio::spawn(HtmlParser::parse_async(
+        &mut document,
+        "<html>
+    <body>
+        <script>
+            console.log('Hello, World!');
+        </script>
+    </body>
+</html>",
+    ));
+    //     HtmlParser::parse(
+    //         &mut document,
+    //         "<html>
+    //     <body>
+    //         <script>
+    //             console.log('Hello, World!');
+    //         </script>
+    //     </body>
+    // </html>",
+    //     );
 
     document.print_tree();
 

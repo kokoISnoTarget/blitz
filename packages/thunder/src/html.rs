@@ -6,7 +6,7 @@ use std::{
 
 use crate::document::JsDocument;
 use blitz_dom::{
-    BaseDocument, ElementNodeData, Node, NodeData, local_name,
+    ElementNodeData, Node, NodeData, local_name,
     net::{CssHandler, ImageHandler, Resource},
     node::Attribute,
     util::ImageType,
@@ -44,7 +44,6 @@ impl TendrilSink<UTF8> for HtmlParser<'_> {
         self.input_buffer.push_back(t);
         while let TokenizerResult::Script(script_node_id) = self.tokenizer.feed(&self.input_buffer)
         {
-            dbg!(script_node_id);
             self.tokenizer.sink.sink.add_script(script_node_id);
         }
     }
@@ -59,7 +58,6 @@ impl TendrilSink<UTF8> for HtmlParser<'_> {
     fn finish(mut self) -> Self::Output {
         while let TokenizerResult::Script(script_node_id) = self.tokenizer.feed(&self.input_buffer)
         {
-            dbg!(script_node_id);
             self.tokenizer.sink.sink.add_script(script_node_id);
         }
         assert!(self.input_buffer.is_empty());
@@ -103,7 +101,28 @@ impl<'a> HtmlSink<'a> {
         }
     }
     fn add_script(&mut self, script_node_id: usize) {
-        self.doc.borrow().debug_log_node(script_node_id);
+        let mut allows_parsing = false;
+        let mut execute_after_fetch = true;
+        let script_node = self.node(script_node_id);
+        let attrs = script_node.attrs().unwrap();
+
+        let is_async = attrs
+            .iter()
+            .any(|attr| matches!(attr.name.local, local_name!("async")));
+        let is_module = attrs
+            .iter()
+            .any(|attr| matches!(attr.name.local, local_name!("type") if attr.value.to_lowercase() == "module"));
+        let is_deferred = attrs
+            .iter()
+            .any(|attr| matches!(attr.name.local, local_name!("defer")));
+        if is_deferred || is_module || is_async {
+            allows_parsing = true;
+        }
+        if is_async {
+            execute_after_fetch = true;
+        } else if is_deferred || is_module {
+            execute_after_fetch = false;
+        }
     }
 
     #[track_caller]
