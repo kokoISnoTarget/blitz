@@ -1,17 +1,22 @@
 use std::{
+    any::Any,
     borrow::Cow,
     cell::{Ref, RefCell, RefMut},
     collections::HashSet,
+    sync::Arc,
 };
 
-use crate::document::JsDocument;
+use crate::{
+    document::JsDocument,
+    net::{OuterJsHandler, ThunderProvider},
+};
 use blitz_dom::{
     ElementNodeData, Node, NodeData, local_name,
     net::{CssHandler, ImageHandler, Resource},
     node::Attribute,
     util::ImageType,
 };
-use blitz_traits::net::{Request, SharedProvider};
+use blitz_traits::net::{NetProvider, Request, SharedProvider};
 use html5ever::{
     ParseOpts, QualName,
     interface::{NodeOrText, QuirksMode},
@@ -23,6 +28,7 @@ use html5ever::{
     interface::{ElementFlags, TreeSink},
     tendril::StrTendril,
 };
+use tokio::{runtime::Handle, task::block_in_place};
 use url::Url;
 use xml5ever::tendril::{fmt::UTF8, stream::Utf8LossyDecoder};
 
@@ -42,10 +48,7 @@ pub struct HtmlParser<'a> {
 impl TendrilSink<UTF8> for HtmlParser<'_> {
     fn process(&mut self, t: StrTendril) {
         self.input_buffer.push_back(t);
-        while let TokenizerResult::Script(script_node_id) = self.tokenizer.feed(&self.input_buffer)
-        {
-            self.tokenizer.sink.sink.add_script(script_node_id);
-        }
+        self.drive_parser();
     }
 
     // FIXME: Is it too noisy to report every character decoding error?
@@ -56,18 +59,15 @@ impl TendrilSink<UTF8> for HtmlParser<'_> {
     type Output = ();
 
     fn finish(mut self) -> Self::Output {
-        while let TokenizerResult::Script(script_node_id) = self.tokenizer.feed(&self.input_buffer)
-        {
-            self.tokenizer.sink.sink.add_script(script_node_id);
-        }
+        self.drive_parser();
         assert!(self.input_buffer.is_empty());
         self.tokenizer.end();
         self.tokenizer.sink.sink.finish()
     }
 }
 impl HtmlParser<'_> {
-    pub fn parse(doc: &mut JsDocument, html: &str) {
-        let sink = HtmlSink::new(doc);
+    pub fn parse(doc: &mut JsDocument, net_provider: Arc<ThunderProvider>, html: &str) {
+        let sink = HtmlSink::new(doc, net_provider);
 
         let opts = ParseOpts::default();
 
@@ -83,27 +83,34 @@ impl HtmlParser<'_> {
             .read_from(&mut html.as_bytes())
             .unwrap()
     }
+
+    fn drive_parser(&mut self) {
+        while let TokenizerResult::Script(script_node_id) = self.tokenizer.feed(&self.input_buffer)
+        {
+            self.tokenizer.sink.sink.add_script(script_node_id);
+        }
+    }
 }
 pub struct HtmlSink<'a> {
     doc: RefCell<&'a mut JsDocument>,
     doc_id: usize,
-    net_provider: SharedProvider<Resource>,
+    net_provider: Arc<ThunderProvider>,
 }
 
 impl<'a> HtmlSink<'a> {
-    fn new(doc: &'a mut JsDocument) -> Self {
+    fn new(doc: &'a mut JsDocument, net_provider: Arc<ThunderProvider>) -> Self {
         let doc_id = doc.id();
-        let net_provider = doc.net_provider.clone();
+
         HtmlSink {
             doc: RefCell::new(doc),
             doc_id,
             net_provider,
         }
     }
-    fn add_script(&mut self, script_node_id: usize) {
+    fn add_script(&mut self, node_id: usize) {
         let mut allows_parsing = false;
         let mut execute_after_fetch = true;
-        let script_node = self.node(script_node_id);
+        let script_node = self.node(node_id);
         let attrs = script_node.attrs().unwrap();
 
         let is_async = attrs
@@ -122,6 +129,46 @@ impl<'a> HtmlSink<'a> {
             execute_after_fetch = true;
         } else if is_deferred || is_module {
             execute_after_fetch = false;
+        }
+
+        // let Some(src) = attrs
+        // .iter()
+        // .find(|attr| matches!(attr.name.local, local_name!("src")))
+        // .map(|attr| attr.value.clone())
+        // else {
+        // let text_content = script_node.text_content();
+        // return;
+        // };
+
+        // let str = if !allows_parsing {
+        // let result = block_in_place(self.net_provider.fetch_imediate(Request::get(src)));
+
+        // Some(result)
+        // } else  if {
+        // };
+
+        let src = attrs
+            .iter()
+            .find(|attr| matches!(attr.name.local, local_name!("src")))
+            .map(|attr| attr.value.clone());
+        if let Some(src) = src {
+            let url = self.doc.borrow().resolve_url(&src);
+            if is_async {
+                self.net_provider.fetch(
+                    self.doc_id,
+                    Request::get(url),
+                    Box::new(OuterJsHandler {
+                        node_id,
+                        defer: !execute_after_fetch,
+                    }),
+                );
+            } else {
+                let bytes =
+                    Handle::current().block_on(self.net_provider.fetch_imediate(Request::get(url)));
+
+                let mut doc = self.doc.borrow_mut();
+                doc.add_script(bytes, is_module, execute_after_fetch);
+            }
         }
     }
 

@@ -21,6 +21,12 @@ pub trait NetProvider: Send + Sync + 'static {
 pub trait NetHandler: Send + Sync + 'static {
     type Data;
     fn bytes(self: Box<Self>, doc_id: usize, bytes: Bytes, callback: SharedCallback<Self::Data>);
+    fn boxed(self) -> BoxedHandler<Self::Data>
+    where
+        Self: Sized,
+    {
+        Box::new(self)
+    }
 }
 
 /// A type which accepts the parsed result of a network request and sends it back to the Document

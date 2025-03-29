@@ -1,10 +1,219 @@
 use std::{
+    any::TypeId,
+    collections::HashMap,
     ffi::c_void,
-    mem::ManuallyDrop,
+    hash::BuildHasher,
     ops::{Deref, DerefMut},
+    ptr::NonNull,
 };
 
-use v8::{External, FunctionCallback, HandleScope, Local, MapFnTo, Object};
+use blitz_dom::BaseDocument;
+use v8::{
+    External, FunctionCallback, FunctionCallbackArguments, FunctionTemplate, Global, Handle,
+    HandleScope, Isolate, Local, MapFnTo, Object, ReturnValue,
+    cppgc::{GarbageCollected, Ptr},
+};
+
+type TemplatesMap = HashMap<TypeId, Global<FunctionTemplate>, BuildTypeIdHasher>;
+
+trait _IsolateExt {
+    fn get_inner<T>(&self, slot: u32) -> &T;
+    fn get_inner_mut<T>(&mut self, slot: u32) -> &mut T;
+    fn get_inner_wrapped<T>(&mut self, slot: u32) -> SlotWrapper<T>;
+    fn set_inner<T>(&mut self, slot: u32, data: T);
+    fn clear_inner<T>(&mut self, slot: u32) -> T;
+}
+impl _IsolateExt for Isolate {
+    fn get_inner<T>(&self, slot: u32) -> &T {
+        let raw_ptr = self.get_data(slot);
+        assert!(!raw_ptr.is_null());
+        unsafe { &*(raw_ptr as *const T) }
+    }
+    fn get_inner_mut<T>(&mut self, slot: u32) -> &mut T {
+        let raw_ptr = self.get_data(slot);
+        assert!(!raw_ptr.is_null());
+        unsafe { &mut *(raw_ptr as *mut T) }
+    }
+    fn get_inner_wrapped<T>(&mut self, slot: u32) -> SlotWrapper<T> {
+        let raw_ptr = self.get_data(slot);
+        assert!(!raw_ptr.is_null());
+        SlotWrapper::new(raw_ptr as *mut T)
+    }
+    fn set_inner<T>(&mut self, slot: u32, data: T) {
+        let ptr = Box::into_raw(Box::new(data));
+        self.set_data(slot, ptr as *mut c_void);
+    }
+    fn clear_inner<T>(&mut self, slot: u32) -> T {
+        let raw_ptr = self.get_data(slot);
+        assert!(!raw_ptr.is_null());
+        self.set_data(slot, std::ptr::null_mut() as *mut c_void);
+        *unsafe { Box::from_raw(raw_ptr as *mut T) }
+    }
+}
+pub trait IsolateExt {
+    fn document(&self) -> &BaseDocument;
+    fn document_mut(&mut self) -> &mut BaseDocument;
+    fn set_document(&mut self, document: BaseDocument);
+    fn clear_document(&mut self) -> BaseDocument;
+    const DOCUMENT_SLOT: u32 = 3;
+
+    fn setup_templates(&mut self);
+    fn clear_templates(&mut self);
+    const TEMPLATE_SLOT: u32 = 2;
+}
+impl IsolateExt for Isolate {
+    fn document(&self) -> &BaseDocument {
+        self.get_inner(Self::DOCUMENT_SLOT)
+    }
+    fn document_mut(&mut self) -> &mut BaseDocument {
+        self.get_inner_mut(Self::DOCUMENT_SLOT)
+    }
+    fn set_document(&mut self, document: BaseDocument) {
+        self.set_inner(Self::DOCUMENT_SLOT, document);
+    }
+    fn clear_document(&mut self) -> BaseDocument {
+        self.clear_inner(Self::DOCUMENT_SLOT)
+    }
+
+    fn setup_templates(&mut self) {
+        let templates = TemplatesMap::with_hasher(Default::default());
+        self.set_inner(Self::TEMPLATE_SLOT, templates);
+    }
+    fn clear_templates(&mut self) {
+        let mut templates = self.clear_inner::<TemplatesMap>(Self::TEMPLATE_SLOT);
+        templates.clear();
+    }
+}
+
+pub trait HandleScopeExt {
+    fn get_template<T: 'static>(&mut self) -> Global<FunctionTemplate>;
+    fn set_template<T: 'static>(
+        &mut self,
+        template: impl Handle<Data = FunctionTemplate>,
+    ) -> Option<Global<FunctionTemplate>>;
+
+    fn create_wrapped_object<T: GarbageCollected + Tag + 'static>(
+        &mut self,
+        object: T,
+    ) -> Local<Object>
+    where
+        [(); { T::TAG } as usize]:;
+    fn unwrap_element_object<T: GarbageCollected + Tag + 'static>(
+        &mut self,
+        obj: Local<Object>,
+    ) -> Option<Ptr<T>>
+    where
+        [(); { T::TAG } as usize]:;
+}
+
+impl HandleScopeExt for HandleScope<'_> {
+    fn get_template<T: 'static>(&mut self) -> Global<FunctionTemplate> {
+        let mut templates = self.get_inner_wrapped::<TemplatesMap>(Self::TEMPLATE_SLOT);
+        let type_id = TypeId::of::<T>();
+
+        let template = templates.entry(type_id).or_insert_with(|| {
+            let templ = FunctionTemplate::new(self, _constructor);
+            Global::new(self, templ)
+        });
+
+        template.clone()
+    }
+    fn set_template<T: 'static>(
+        &mut self,
+        template: impl Handle<Data = FunctionTemplate>,
+    ) -> Option<Global<FunctionTemplate>> {
+        let global = Global::new(self, template);
+        let type_id = TypeId::of::<T>();
+
+        let templates = self.get_inner_mut::<TemplatesMap>(Self::TEMPLATE_SLOT);
+        templates.insert(type_id, global)
+    }
+    fn create_wrapped_object<T: GarbageCollected + Tag + 'static>(
+        &mut self,
+        object: T,
+    ) -> Local<Object>
+    where
+        [(); { T::TAG } as usize]:,
+    {
+        let template = self.get_template::<T>();
+        let template = Local::new(self, template);
+        let func = template.get_function(self).unwrap();
+        let obj = func.new_instance(self, &[]).unwrap();
+
+        let heap = self.get_cpp_heap().unwrap();
+        let member = unsafe { v8::cppgc::make_garbage_collected(heap, object) };
+        unsafe {
+            v8::Object::wrap::<{ T::TAG }, T>(self, obj, &member);
+        }
+        obj
+    }
+    fn unwrap_element_object<T: GarbageCollected + Tag>(
+        &mut self,
+        obj: Local<Object>,
+    ) -> Option<Ptr<T>>
+    where
+        [(); { T::TAG } as usize]:,
+    {
+        unsafe { v8::Object::unwrap::<{ T::TAG }, T>(self, obj) }
+    }
+}
+
+fn _constructor(_scope: &mut HandleScope<'_>, _args: FunctionCallbackArguments, _ret: ReturnValue) {
+    // Implementation of the constructor function
+}
+
+pub fn element_template<'a>(scope: &mut HandleScope<'a, ()>) -> Local<'a, FunctionTemplate> {
+    FunctionTemplate::new(scope, _constructor)
+}
+
+pub trait Tag {
+    const TAG: u16;
+}
+
+pub fn wrap_element_object<'a, T: GarbageCollected + Tag + 'static>(
+    scope: &mut v8::HandleScope<'a>,
+    t: T,
+) -> v8::Local<'a, v8::Object>
+where
+    [(); { T::TAG } as usize]:,
+{
+    // This is from https://github.com/denoland/deno_core/blob/b37d41fc036653d4dccb0cf6992abed94168f5d8/core/cppgc.rs#L47
+    // let obj = match templates.get::<T>() {
+    // Some(templ) => {
+    // let templ = v8::Local::new(scope, templ);
+    // let inst = templ.instance_template(scope);
+    // inst.new_instance(scope).unwrap()
+    // }
+    // _ => {
+    // let templ = v8::Local::new(scope, state.cppgc_template.borrow().as_ref().unwrap());
+    // let func = templ.get_function(scope).unwrap();
+    // func.new_instance(scope, &[]).unwrap()
+    // }
+    // };
+
+    let template = element_template(scope);
+    let func = template.get_function(scope).unwrap();
+    let obj = func.new_instance(scope, &[]).unwrap();
+
+    let heap = scope.get_cpp_heap().unwrap();
+
+    let member = unsafe { v8::cppgc::make_garbage_collected(heap, t) };
+
+    unsafe {
+        v8::Object::wrap::<{ T::TAG }, T>(scope, obj, &member);
+    }
+    obj
+}
+
+pub fn unwrap_element_object<T: GarbageCollected + Tag>(
+    isolate: &mut Isolate,
+    obj: Local<Object>,
+) -> Option<Ptr<T>>
+where
+    [(); { T::TAG } as usize]:,
+{
+    unsafe { v8::Object::unwrap::<{ T::TAG }, T>(isolate, obj) }
+}
 
 pub fn add_rust_element_to_object<T>(scope: &mut HandleScope<'_>, obj: &Local<Object>, element: T) {
     let boxed_element = Box::new(element);
@@ -67,4 +276,71 @@ pub fn add_function_to_object(
     let func = v8::Function::new(scope, func).unwrap();
     let name = v8::String::new(scope, name).unwrap();
     obj.set(scope, name.into(), func.into());
+}
+
+// This is from https://github.com/denoland/rusty_v8/blob/3ffe0d7de976172148939ef3c85176e2b1e44781/src/isolate.rs#L2092
+/// A special hasher that is optimized for hashing `std::any::TypeId` values.
+/// `TypeId` values are actually 64-bit values which themselves come out of some
+/// hash function, so it's unnecessary to shuffle their bits any further.
+#[derive(Clone, Default)]
+pub(crate) struct TypeIdHasher {
+    state: Option<u64>,
+}
+
+impl std::hash::Hasher for TypeIdHasher {
+    fn write(&mut self, _bytes: &[u8]) {
+        panic!("TypeIdHasher::write() called unexpectedly");
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        // The internal hash function of TypeId only takes the bottom 64-bits, even on versions
+        // of Rust that use a 128-bit TypeId.
+        let prev_state = self.state.replace(value);
+        debug_assert_eq!(prev_state, None);
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.state.unwrap()
+    }
+}
+
+// This is from https://github.com/denoland/rusty_v8/blob/3ffe0d7de976172148939ef3c85176e2b1e44781/src/isolate.rs#L2115C1-L2129C1
+/// Factory for instances of `TypeIdHasher`. This is the type that one would
+/// pass to the constructor of some map/set type in order to make it use
+/// `TypeIdHasher` instead of the default hasher implementation.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct BuildTypeIdHasher;
+
+impl BuildHasher for BuildTypeIdHasher {
+    type Hasher = TypeIdHasher;
+
+    #[inline]
+    fn build_hasher(&self) -> Self::Hasher {
+        Default::default()
+    }
+}
+
+struct SlotWrapper<T> {
+    data: NonNull<T>,
+}
+impl<T> SlotWrapper<T> {
+    pub fn new(data: *mut T) -> Self {
+        Self {
+            data: NonNull::new(data).unwrap(),
+        }
+    }
+}
+impl<T> Deref for SlotWrapper<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.data.as_ref() }
+    }
+}
+impl<T> DerefMut for SlotWrapper<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.data.as_mut() }
+    }
 }

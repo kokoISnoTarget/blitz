@@ -5,17 +5,16 @@ use std::{
     rc::Rc,
 };
 
-use crate::objects::{self, add_console, add_document};
+use crate::{net::ThunderProvider, objects::{self, add_console, add_document, IsolateExt}};
 use blitz_dom::BaseDocument;
-use blitz_traits::{Document, Viewport};
+use blitz_traits::{Document, Viewport, net::Bytes};
 use v8::{
-    Context, ContextOptions, ContextScope, CreateParams, Exception, FunctionCallbackArguments,
-    FunctionTemplate, HandleScope, Isolate, ObjectTemplate, OwnedIsolate, ReturnValue,
-    cppgc::{Heap, make_garbage_collected, shutdown_process},
+    cppgc::{make_garbage_collected, shutdown_process, Heap}, Context, ContextOptions, ContextScope, CreateParams, Exception, FunctionCallbackArguments, FunctionTemplate, Global, HandleScope, Isolate, Local, NewStringType, ObjectTemplate, OwnedIsolate, ReturnValue
 };
 
 pub struct JsDocument {
-    pub isolate: OwnedIsolate,
+    context: Global<Context>,
+    isolate: OwnedIsolate,
 }
 
 impl Document for JsDocument {
@@ -32,32 +31,47 @@ impl Document for JsDocument {
         false
     }
 }
-impl From<JsDocument> for BaseDocument {
-    fn from(mut js_doc: JsDocument) -> BaseDocument {
-        js_doc.isolate.remove_slot::<BaseDocument>().unwrap()
+impl<'a> From<JsDocument> for BaseDocument {
+    fn from(mut js_doc: JsDocument<'a>) -> BaseDocument {
+        js_doc.isolate.clear_document()
     }
 }
-impl AsRef<BaseDocument> for JsDocument {
+impl<'a> AsRef<BaseDocument> for JsDocument<'a> {
     fn as_ref(&self) -> &BaseDocument {
-        self.isolate.get_slot::<BaseDocument>().unwrap()
+        self.isolate.document()
     }
 }
-impl AsMut<BaseDocument> for JsDocument {
+impl<'a> AsMut<BaseDocument> for JsDocument<'a> {
     fn as_mut(&mut self) -> &mut BaseDocument {
-        self.isolate.get_slot_mut::<BaseDocument>().unwrap()
+        self.isolate.document_mut()
     }
 }
 
 impl JsDocument {
-    pub fn new(mut isolate: OwnedIsolate) -> Self {
+    pub fn new(mut isolate: OwnedIsolate) -> JsDocument {
         let document = BaseDocument::new(Viewport::default());
 
-        isolate.set_slot(document);
-        Self { isolate }
+        isolate.set_document(document);
+        isolate.setup_templates();
+
+        let mut scope = HandleScope::new(&mut isolate);
+        let context = Context::new(&mut scope, ContextOptions::default());
+
+        Self::initialize(&mut scope, context);
+        let context = Global::new(&mut scope, context);
+
+        drop(scope);
+
+        JsDocument { context, isolate }
     }
 
-    // Setup global scope
-    pub fn initialize(&mut self) {}
+    // Setup global
+    pub fn initialize(scope: &mut HandleScope<'_, ()>, context: Local<Context>) {
+        let mut scope = ContextScope::new(scope, context);
+
+        add_console(&mut scope, &context);
+        add_document(&mut scope, &context);
+    }
 
     pub fn setup(&mut self) {
         let handle_scope = &mut HandleScope::new(&mut self.isolate);
@@ -80,6 +94,21 @@ impl JsDocument {
         )
         .unwrap();
         execute_script(scope, source);
+    }
+
+    pub(crate) fn add_script(
+        &mut self,
+        script: Bytes,
+        is_module: bool,
+        executed_after_fetch: bool,
+    ) {
+        let scope = &mut v8::HandleScope::new(&mut self.isolate);
+        let string = v8::String::new_from_utf8(scope, &script, NewStringType::Normal).unwrap();
+
+        if is_module {
+            v8::Script::compile(scope, source, origin)
+            v8::Module::create_synthetic_module(scope, module_name, export_names, evaluation_steps)
+        }
     }
 }
 
@@ -119,5 +148,13 @@ impl Deref for JsDocument {
 impl DerefMut for JsDocument {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.as_mut()
+    }
+}
+
+impl Drop for JsDocument {
+    fn drop(&mut self) {
+        let isolate = &mut self.isolate;
+        isolate.clear_document();
+        isolate.clear_templates();
     }
 }

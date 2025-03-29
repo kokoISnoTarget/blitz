@@ -2,6 +2,7 @@
 
 mod document;
 mod html;
+mod net;
 mod objects;
 
 pub use self::document::JsDocument;

@@ -30,6 +30,7 @@ pub enum Resource {
     Css(usize, DocumentStyleSheet),
     Font(Bytes),
     None,
+    ScriptFile(usize, bool, Bytes),
 }
 pub struct CssHandler {
     pub node: usize,
