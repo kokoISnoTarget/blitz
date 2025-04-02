@@ -1,14 +1,19 @@
 use std::{
-    any::Any,
     borrow::Cow,
-    cell::{Ref, RefCell, RefMut},
+    cell::RefCell,
     collections::HashSet,
-    sync::Arc,
+    ops::DerefMut,
+    pin::Pin,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    task::Waker,
 };
 
 use crate::{
-    document::JsDocument,
-    net::{OuterJsHandler, ThunderProvider},
+    fetch_thread::ScriptOptions,
+    objects::{IsolateExt, IsolatePtr},
 };
 use blitz_dom::{
     ElementNodeData, Node, NodeData, local_name,
@@ -16,21 +21,21 @@ use blitz_dom::{
     node::Attribute,
     util::ImageType,
 };
-use blitz_traits::net::{NetProvider, Request, SharedProvider};
+use blitz_traits::net::{Request, SharedProvider};
 use html5ever::{
     ParseOpts, QualName,
     interface::{NodeOrText, QuirksMode},
     tendril::TendrilSink,
-    tokenizer::{BufferQueue, TokenSink, Tokenizer, TokenizerResult},
+    tokenizer::{BufferQueue, Tokenizer, TokenizerResult},
     tree_builder::TreeBuilder,
 };
 use html5ever::{
     interface::{ElementFlags, TreeSink},
     tendril::StrTendril,
 };
-use tokio::{runtime::Handle, task::block_in_place};
 use url::Url;
-use xml5ever::tendril::{fmt::UTF8, stream::Utf8LossyDecoder};
+use v8::{Context, Global, HandleScope, Isolate, script_compiler::CompileOptions};
+use xml5ever::tendril::fmt::UTF8;
 
 /// Convert an html5ever Attribute which uses tendril for its value to a blitz Attribute
 /// which uses String.
@@ -41,75 +46,75 @@ fn html5ever_to_blitz_attr(attr: html5ever::Attribute) -> Attribute {
     }
 }
 
-pub struct HtmlParser<'a> {
-    pub tokenizer: Tokenizer<TreeBuilder<usize, HtmlSink<'a>>>,
+pub struct HtmlParser {
+    pub tokenizer: Tokenizer<TreeBuilder<usize, HtmlSink>>,
     pub input_buffer: BufferQueue,
+    pub should_parse: ShouldParse,
+    pub finished: bool,
 }
-impl TendrilSink<UTF8> for HtmlParser<'_> {
-    fn process(&mut self, t: StrTendril) {
-        self.input_buffer.push_back(t);
-        self.drive_parser();
-    }
 
-    // FIXME: Is it too noisy to report every character decoding error?
-    fn error(&mut self, desc: Cow<'static, str>) {
-        self.tokenizer.sink.sink.parse_error(desc)
-    }
-
-    type Output = ();
-
-    fn finish(mut self) -> Self::Output {
-        self.drive_parser();
-        assert!(self.input_buffer.is_empty());
-        self.tokenizer.end();
-        self.tokenizer.sink.sink.finish()
-    }
-}
-impl HtmlParser<'_> {
-    pub fn parse(doc: &mut JsDocument, net_provider: Arc<ThunderProvider>, html: &str) {
-        let sink = HtmlSink::new(doc, net_provider);
+impl HtmlParser {
+    pub fn new(isolate: &mut Isolate) -> HtmlParser {
+        let sink = HtmlSink::new(isolate);
 
         let opts = ParseOpts::default();
 
         let tb = TreeBuilder::new(sink, opts.tree_builder);
         let tok = Tokenizer::new(tb, opts.tokenizer);
 
-        let parser = HtmlParser {
+        HtmlParser {
             tokenizer: tok,
             input_buffer: BufferQueue::default(),
-        };
-
-        Utf8LossyDecoder::new(parser)
-            .read_from(&mut html.as_bytes())
-            .unwrap()
+            should_parse: ShouldParse::new(),
+            finished: false,
+        }
     }
 
-    fn drive_parser(&mut self) {
-        while let TokenizerResult::Script(script_node_id) = self.tokenizer.feed(&self.input_buffer)
-        {
-            self.tokenizer.sink.sink.add_script(script_node_id);
+    pub async fn finish_async(&mut self) {
+        self.drive_parser().await;
+        assert!(self.input_buffer.is_empty());
+        self.tokenizer.end();
+        self.tokenizer.sink.sink.finish_async().await;
+    }
+    pub async fn drive_parser(&mut self) {
+        loop {
+            // Wait for running scripts and some resources to be fetched
+            self.should_parse.iref().await;
+            let result = self.tokenizer.feed(&self.input_buffer);
+            if let TokenizerResult::Script(script_node_id) = result {
+                self.tokenizer.sink.sink.add_script(script_node_id);
+            } else {
+                break;
+            }
         }
     }
 }
-pub struct HtmlSink<'a> {
-    doc: RefCell<&'a mut JsDocument>,
+pub struct HtmlSink {
+    isolate: IsolatePtr,
     doc_id: usize,
-    net_provider: Arc<ThunderProvider>,
+    net_provider: SharedProvider<Resource>,
+    style_nodes: RefCell<Vec<usize>>,
 }
 
-impl<'a> HtmlSink<'a> {
-    fn new(doc: &'a mut JsDocument, net_provider: Arc<ThunderProvider>) -> Self {
-        let doc_id = doc.id();
+impl HtmlSink {
+    fn new(isolate: &mut Isolate) -> HtmlSink {
+        let net_provider = isolate.document().net_provider.clone();
+        let doc_id = isolate.document().id();
 
         HtmlSink {
-            doc: RefCell::new(doc),
+            isolate: isolate.ptr(),
             doc_id,
             net_provider,
+            style_nodes: RefCell::new(Vec::new()),
+        }
+    }
+    async fn finish_async(&mut self) {
+        let doc = self.isolate.document_mut();
+        for id in self.style_nodes.borrow().iter() {
+            doc.process_style_element(*id);
         }
     }
     fn add_script(&mut self, node_id: usize) {
-        let mut allows_parsing = false;
-        let mut execute_after_fetch = true;
         let script_node = self.node(node_id);
         let attrs = script_node.attrs().unwrap();
 
@@ -119,84 +124,86 @@ impl<'a> HtmlSink<'a> {
         let is_module = attrs
             .iter()
             .any(|attr| matches!(attr.name.local, local_name!("type") if attr.value.to_lowercase() == "module"));
-        let is_deferred = attrs
+        let is_defer = attrs
             .iter()
             .any(|attr| matches!(attr.name.local, local_name!("defer")));
-        if is_deferred || is_module || is_async {
-            allows_parsing = true;
-        }
-        if is_async {
-            execute_after_fetch = true;
-        } else if is_deferred || is_module {
-            execute_after_fetch = false;
-        }
-
-        // let Some(src) = attrs
-        // .iter()
-        // .find(|attr| matches!(attr.name.local, local_name!("src")))
-        // .map(|attr| attr.value.clone())
-        // else {
-        // let text_content = script_node.text_content();
-        // return;
-        // };
-
-        // let str = if !allows_parsing {
-        // let result = block_in_place(self.net_provider.fetch_imediate(Request::get(src)));
-
-        // Some(result)
-        // } else  if {
-        // };
 
         let src = attrs
             .iter()
             .find(|attr| matches!(attr.name.local, local_name!("src")))
             .map(|attr| attr.value.clone());
-        if let Some(src) = src {
-            let url = self.doc.borrow().resolve_url(&src);
-            if is_async {
-                self.net_provider.fetch(
-                    self.doc_id,
-                    Request::get(url),
-                    Box::new(OuterJsHandler {
-                        node_id,
-                        defer: !execute_after_fetch,
-                    }),
-                );
-            } else {
-                let bytes =
-                    Handle::current().block_on(self.net_provider.fetch_imediate(Request::get(url)));
 
-                let mut doc = self.doc.borrow_mut();
-                doc.add_script(bytes, is_module, execute_after_fetch);
+        if let Some(src) = src {
+            let url = self.isolate.document().resolve_url(&src);
+            self.isolate.fetch_thread().fetch(ScriptOptions {
+                url,
+                is_module,
+                is_defer,
+                is_async,
+            });
+        } else {
+            let script = script_node.text_content();
+            if is_defer {
+                todo!();
             }
+
+            let context = self.isolate.remove_slot::<Global<Context>>().unwrap();
+            let mut scope = HandleScope::with_context(self.isolate.deref_mut(), &context);
+
+            let script = v8::String::new(&mut scope, &script).unwrap();
+            let mut source = v8::script_compiler::Source::new(script, None);
+
+            let mut try_catch = v8::TryCatch::new(&mut scope);
+            let failed = v8::script_compiler::compile(
+                &mut try_catch,
+                &mut source,
+                CompileOptions::EagerCompile,
+                v8::script_compiler::NoCacheReason::NoReason,
+            )
+            .unwrap()
+            .run(&mut try_catch)
+            .is_none();
+
+            if failed {
+                let stack_trace = try_catch
+                    .stack_trace()
+                    .or_else(|| try_catch.exception())
+                    .map_or_else(
+                        || "no stack trace".into(),
+                        |value| value.to_rust_string_lossy(&mut try_catch),
+                    );
+                #[cfg(feature = "tracing")]
+                tracing::error!("Running script failed: \n{}", stack_trace);
+            }
+            try_catch.set_slot(context);
         }
     }
 
     #[track_caller]
     fn create_node(&self, node_data: NodeData) -> usize {
-        self.doc.borrow_mut().create_node(node_data)
+        self.isolate.document_mut_from_ref().create_node(node_data)
     }
 
     #[track_caller]
     fn create_text_node(&self, text: &str) -> usize {
-        self.doc.borrow_mut().create_text_node(text)
+        self.isolate.document_mut_from_ref().create_text_node(text)
     }
 
     #[track_caller]
-    fn node(&self, id: usize) -> Ref<Node> {
-        Ref::map(self.doc.borrow(), |doc| &doc.nodes[id])
+    fn node(&self, id: usize) -> &Node {
+        &self.isolate.document().nodes[id]
     }
 
     #[track_caller]
-    fn node_mut(&self, id: usize) -> RefMut<Node> {
-        RefMut::map(self.doc.borrow_mut(), |doc| &mut doc.nodes[id])
+    fn node_mut(&self, id: usize) -> &mut Node {
+        &mut self.isolate.document_mut_from_ref().nodes[id]
     }
 
     fn try_append_text_to_text_node(&self, node_id: Option<usize>, text: &str) -> bool {
         let Some(node_id) = node_id else {
             return false;
         };
-        let mut node = self.node_mut(node_id);
+        let node = self.node_mut(node_id);
 
         match node.text_data_mut() {
             Some(data) => {
@@ -218,14 +225,14 @@ impl<'a> HtmlSink<'a> {
         let href_attr = node.attr(local_name!("href"));
 
         if let (Some("stylesheet"), Some(href)) = (rel_attr, href_attr) {
-            let url = self.doc.borrow().resolve_url(href);
+            let url = self.isolate.document().resolve_url(href);
             self.net_provider.fetch(
                 self.doc_id,
                 Request::get(url.clone()),
                 Box::new(CssHandler {
                     node: target_id,
                     source_url: url,
-                    guard: self.doc.borrow().guard.clone(),
+                    guard: self.isolate.document().guard.clone(),
                     provider: self.net_provider.clone(),
                 }),
             );
@@ -236,9 +243,9 @@ impl<'a> HtmlSink<'a> {
         let node = self.node(target_id);
         if let Some(raw_src) = node.attr(local_name!("src")) {
             if !raw_src.is_empty() {
-                let src = self.doc.borrow().resolve_url(raw_src);
-                self.doc.borrow().net_provider.fetch(
-                    self.doc.borrow().id(),
+                let src = self.isolate.document().resolve_url(raw_src);
+                self.isolate.document().net_provider.fetch(
+                    self.isolate.document().id(),
                     Request::get(src),
                     Box::new(ImageHandler::new(target_id, ImageType::Image)),
                 );
@@ -262,7 +269,7 @@ impl<'a> HtmlSink<'a> {
             (tagname, type_attr, value)
         {
             let value = value.to_string();
-            drop(node);
+            _ = node;
             let id = self.create_text_node(&value);
             self.append(&target_id, NodeOrText::AppendNode(id));
         }
@@ -270,22 +277,23 @@ impl<'a> HtmlSink<'a> {
 }
 
 // This is from https://github.com/DioxusLabs/blitz/blob/36369ba285d7291b449d9d7770427fc895dc5221/packages/blitz-html/src/html_sink.rs
-impl<'b> TreeSink for HtmlSink<'b> {
+impl TreeSink for HtmlSink {
     type Output = ();
 
     // we use the ID of the nodes in the tree as the handle
     type Handle = usize;
 
     type ElemName<'a>
-        = Ref<'a, QualName>
+        = &'a QualName
     where
         Self: 'a;
 
-    fn finish(self) -> Self::Output {
+    fn finish(mut self) -> Self::Output {
         // Add inline stylesheets (<style> elements)
-        //for id in self.style_nodes.borrow().iter() {
-        //    doc.process_style_element(*id);
-        //}
+        let doc = self.isolate.document_mut();
+        for id in self.style_nodes.borrow().iter() {
+            doc.process_style_element(*id);
+        }
         // TODO: Implement style processing
 
         // for error in self.errors.borrow().iter() {
@@ -303,12 +311,10 @@ impl<'b> TreeSink for HtmlSink<'b> {
     }
 
     fn elem_name<'a>(&'a self, target: &'a Self::Handle) -> Self::ElemName<'a> {
-        Ref::map(self.doc.borrow(), |doc| {
-            &doc.as_ref().nodes[*target]
-                .element_data()
-                .expect("TreeSink::elem_name called on a node which is not an element!")
-                .name
-        })
+        &self.isolate.document().nodes[*target]
+            .element_data()
+            .expect("TreeSink::elem_name called on a node which is not an element!")
+            .name
     }
 
     fn create_element(
@@ -319,7 +325,7 @@ impl<'b> TreeSink for HtmlSink<'b> {
     ) -> Self::Handle {
         let attrs = attrs.into_iter().map(html5ever_to_blitz_attr).collect();
         let mut data = ElementNodeData::new(name.clone(), attrs);
-        data.flush_style_attribute(&self.doc.borrow().guard);
+        data.flush_style_attribute(&self.isolate.document().guard);
 
         let id = self.create_node(NodeData::Element(data));
         let node = self.node(id);
@@ -328,11 +334,14 @@ impl<'b> TreeSink for HtmlSink<'b> {
         *node.stylo_element_data.borrow_mut() = Some(Default::default());
 
         let id_attr = node.attr(local_name!("id")).map(|id| id.to_string());
-        drop(node);
+        _ = node;
 
         // If the node has an "id" attribute, store it in the ID map.
         if let Some(id_attr) = id_attr {
-            self.doc.borrow_mut().nodes_to_id.insert(id_attr, id);
+            self.isolate
+                .document_mut_from_ref()
+                .nodes_to_id
+                .insert(id_attr, id);
         }
 
         // Custom post-processing by element tag name
@@ -340,10 +349,7 @@ impl<'b> TreeSink for HtmlSink<'b> {
             "link" => self.load_linked_stylesheet(id),
             "img" => self.load_image(id),
             "input" => self.process_button_input(id),
-            "style" => {
-                todo!();
-                //self.style_nodes.borrow_mut().push(id)
-            }
+            "style" => self.style_nodes.borrow_mut().push(id),
             _ => {}
         }
 
@@ -454,7 +460,7 @@ impl<'b> TreeSink for HtmlSink<'b> {
     }
 
     fn add_attrs_if_missing(&self, target: &Self::Handle, attrs: Vec<html5ever::Attribute>) {
-        let mut node = self.node_mut(*target);
+        let node = self.node_mut(*target);
         let element_data = node.element_data_mut().expect("Not an element");
 
         let existing_names = element_data
@@ -472,7 +478,7 @@ impl<'b> TreeSink for HtmlSink<'b> {
     }
 
     fn remove_from_parent(&self, target: &Self::Handle) {
-        let mut node = self.node_mut(*target);
+        let node = self.node_mut(*target);
         let parent_id = node.parent.take().expect("Node has no parent");
         self.node_mut(parent_id)
             .children
@@ -490,5 +496,46 @@ impl<'b> TreeSink for HtmlSink<'b> {
 
         // Add children to new parent
         self.node_mut(*new_parent_id).children.extend(&children);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ShouldParse(pub(crate) Arc<ShouldParseInner>);
+impl ShouldParse {
+    pub fn new() -> Self {
+        Self(Arc::new(ShouldParseInner {
+            waker: Mutex::default(),
+            state: AtomicBool::new(true),
+        }))
+    }
+    pub fn iref(&self) -> ShouldParseRef {
+        ShouldParseRef(&self.0)
+    }
+}
+
+#[derive(Debug)]
+pub struct ShouldParseInner {
+    pub waker: Mutex<Option<Waker>>,
+    pub state: AtomicBool,
+}
+
+pub struct ShouldParseRef<'a>(&'a ShouldParseInner);
+
+impl Future for ShouldParseRef<'_> {
+    type Output = ();
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.get_mut();
+        let inner = this.0;
+
+        if inner.state.load(Ordering::Relaxed) {
+            std::task::Poll::Ready(())
+        } else {
+            *inner.waker.lock().unwrap() = Some(cx.waker().clone());
+            std::task::Poll::Pending
+        }
     }
 }

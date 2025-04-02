@@ -9,12 +9,25 @@ use std::{
 
 use blitz_dom::BaseDocument;
 use v8::{
-    External, FunctionCallback, FunctionCallbackArguments, FunctionTemplate, Global, Handle,
-    HandleScope, Isolate, Local, MapFnTo, Object, ReturnValue,
+    self, External, Function, FunctionCallback, FunctionCallbackArguments, FunctionTemplate,
+    Global, Handle, HandleScope, Isolate, Local, MapFnTo, Object, ObjectTemplate, ReturnValue,
+    Value,
     cppgc::{GarbageCollected, Ptr},
 };
 
-type TemplatesMap = HashMap<TypeId, Global<FunctionTemplate>, BuildTypeIdHasher>;
+use crate::{HtmlParser, fetch_thread::FetchThread};
+
+const FUNCTION_TEMPLATE_SLOT: u32 = 0;
+const DOCUMENT_SLOT: u32 = 1;
+const OBJECT_TEMPLATE_SLOT: u32 = 2;
+const HTML_PARSER_SLOT: u32 = 3;
+const FETCH_THREAD_SLOT: u32 = 4;
+const EVENT_LISTENERS_SLOT: u32 = 5;
+
+type FunctionTemplatesMap = HashMap<TypeId, Global<FunctionTemplate>, BuildTypeIdHasher>;
+type ObjectTemplatesMap = HashMap<TypeId, Global<ObjectTemplate>, BuildTypeIdHasher>;
+
+type EventListeners = HashMap<u32, HashMap<String, Global<Value>>>;
 
 trait _IsolateExt {
     fn get_inner<T>(&self, slot: u32) -> &T;
@@ -26,12 +39,12 @@ trait _IsolateExt {
 impl _IsolateExt for Isolate {
     fn get_inner<T>(&self, slot: u32) -> &T {
         let raw_ptr = self.get_data(slot);
-        assert!(!raw_ptr.is_null());
+        assert!(!raw_ptr.is_null(), "Data on slot {slot} is null");
         unsafe { &*(raw_ptr as *const T) }
     }
     fn get_inner_mut<T>(&mut self, slot: u32) -> &mut T {
         let raw_ptr = self.get_data(slot);
-        assert!(!raw_ptr.is_null());
+        assert!(!raw_ptr.is_null(), "Data on slot {slot} is null");
         unsafe { &mut *(raw_ptr as *mut T) }
     }
     fn get_inner_wrapped<T>(&mut self, slot: u32) -> SlotWrapper<T> {
@@ -53,44 +66,101 @@ impl _IsolateExt for Isolate {
 pub trait IsolateExt {
     fn document(&self) -> &BaseDocument;
     fn document_mut(&mut self) -> &mut BaseDocument;
+    fn document_mut_from_ref(&self) -> &mut BaseDocument;
     fn set_document(&mut self, document: BaseDocument);
     fn clear_document(&mut self) -> BaseDocument;
-    const DOCUMENT_SLOT: u32 = 3;
+
+    fn ptr(&self) -> IsolatePtr;
+
+    fn parser(&mut self) -> &mut HtmlParser;
+    fn set_parser(&mut self, parser: HtmlParser);
+
+    fn fetch_thread(&self) -> &FetchThread;
+    fn set_fetch_thread(&mut self, fetch_thread: FetchThread);
 
     fn setup_templates(&mut self);
     fn clear_templates(&mut self);
-    const TEMPLATE_SLOT: u32 = 2;
+
+    fn event_listeners(&self) -> &EventListeners;
+    fn event_listeners_mut(&mut self) -> &mut EventListeners;
+    fn setup_listeners(&mut self);
+    fn clear_listeners(&mut self);
 }
 impl IsolateExt for Isolate {
     fn document(&self) -> &BaseDocument {
-        self.get_inner(Self::DOCUMENT_SLOT)
+        self.get_inner(DOCUMENT_SLOT)
     }
     fn document_mut(&mut self) -> &mut BaseDocument {
-        self.get_inner_mut(Self::DOCUMENT_SLOT)
+        self.get_inner_mut(DOCUMENT_SLOT)
+    }
+    fn document_mut_from_ref(&self) -> &mut BaseDocument {
+        let raw_ptr = self.get_data(DOCUMENT_SLOT);
+        assert!(!raw_ptr.is_null());
+        unsafe { &mut *(raw_ptr as *mut _) }
     }
     fn set_document(&mut self, document: BaseDocument) {
-        self.set_inner(Self::DOCUMENT_SLOT, document);
+        self.set_inner(DOCUMENT_SLOT, document);
     }
     fn clear_document(&mut self) -> BaseDocument {
-        self.clear_inner(Self::DOCUMENT_SLOT)
+        self.clear_inner(DOCUMENT_SLOT)
     }
 
     fn setup_templates(&mut self) {
-        let templates = TemplatesMap::with_hasher(Default::default());
-        self.set_inner(Self::TEMPLATE_SLOT, templates);
+        let templates = FunctionTemplatesMap::with_hasher(Default::default());
+        self.set_inner(FUNCTION_TEMPLATE_SLOT, templates);
+        let templates = ObjectTemplatesMap::with_hasher(Default::default());
+        self.set_inner(OBJECT_TEMPLATE_SLOT, templates);
     }
     fn clear_templates(&mut self) {
-        let mut templates = self.clear_inner::<TemplatesMap>(Self::TEMPLATE_SLOT);
+        let mut templates = self.clear_inner::<FunctionTemplatesMap>(FUNCTION_TEMPLATE_SLOT);
         templates.clear();
+        let mut templates = self.clear_inner::<ObjectTemplatesMap>(OBJECT_TEMPLATE_SLOT);
+        templates.clear();
+    }
+
+    fn ptr(&self) -> IsolatePtr {
+        IsolatePtr::new(self as *const Isolate as *mut Isolate)
+    }
+
+    fn parser(&mut self) -> &mut HtmlParser {
+        self.get_inner_mut(HTML_PARSER_SLOT)
+    }
+    fn set_parser(&mut self, parser: HtmlParser) {
+        self.set_inner(HTML_PARSER_SLOT, parser);
+    }
+    fn fetch_thread(&self) -> &FetchThread {
+        self.get_inner(FETCH_THREAD_SLOT)
+    }
+    fn set_fetch_thread(&mut self, thread: FetchThread) {
+        self.set_inner(FETCH_THREAD_SLOT, thread);
+    }
+
+    fn event_listeners(&self) -> &EventListeners {
+        self.get_inner(EVENT_LISTENERS_SLOT)
+    }
+    fn event_listeners_mut(&mut self) -> &mut EventListeners {
+        self.get_inner_mut(EVENT_LISTENERS_SLOT)
+    }
+    fn setup_listeners(&mut self) {
+        self.set_inner(EVENT_LISTENERS_SLOT, EventListeners::default());
+    }
+    fn clear_listeners(&mut self) {
+        self.clear_inner::<EventListeners>(EVENT_LISTENERS_SLOT);
     }
 }
 
 pub trait HandleScopeExt {
-    fn get_template<T: 'static>(&mut self) -> Global<FunctionTemplate>;
-    fn set_template<T: 'static>(
+    fn get_fn_template<T: 'static>(&mut self) -> Global<FunctionTemplate>;
+    fn set_fn_template<T: 'static>(
         &mut self,
         template: impl Handle<Data = FunctionTemplate>,
     ) -> Option<Global<FunctionTemplate>>;
+    fn get_obj_template<T: 'static>(&mut self) -> Global<ObjectTemplate>;
+    fn set_obj_template<T: 'static>(
+        &mut self,
+        template: impl Handle<Data = ObjectTemplate>,
+    ) -> Option<Global<ObjectTemplate>>;
+    fn init_templates(&mut self);
 
     fn create_wrapped_object<T: GarbageCollected + Tag + 'static>(
         &mut self,
@@ -107,8 +177,8 @@ pub trait HandleScopeExt {
 }
 
 impl HandleScopeExt for HandleScope<'_> {
-    fn get_template<T: 'static>(&mut self) -> Global<FunctionTemplate> {
-        let mut templates = self.get_inner_wrapped::<TemplatesMap>(Self::TEMPLATE_SLOT);
+    fn get_fn_template<T: 'static>(&mut self) -> Global<FunctionTemplate> {
+        let mut templates = self.get_inner_wrapped::<FunctionTemplatesMap>(FUNCTION_TEMPLATE_SLOT);
         let type_id = TypeId::of::<T>();
 
         let template = templates.entry(type_id).or_insert_with(|| {
@@ -118,15 +188,39 @@ impl HandleScopeExt for HandleScope<'_> {
 
         template.clone()
     }
-    fn set_template<T: 'static>(
+    fn set_fn_template<T: 'static>(
         &mut self,
         template: impl Handle<Data = FunctionTemplate>,
     ) -> Option<Global<FunctionTemplate>> {
         let global = Global::new(self, template);
         let type_id = TypeId::of::<T>();
 
-        let templates = self.get_inner_mut::<TemplatesMap>(Self::TEMPLATE_SLOT);
+        let templates = self.get_inner_mut::<FunctionTemplatesMap>(FUNCTION_TEMPLATE_SLOT);
         templates.insert(type_id, global)
+    }
+    fn get_obj_template<T: 'static>(&mut self) -> Global<ObjectTemplate> {
+        let mut templates = self.get_inner_wrapped::<ObjectTemplatesMap>(OBJECT_TEMPLATE_SLOT);
+        let type_id = TypeId::of::<T>();
+
+        let template = templates.entry(type_id).or_insert_with(|| {
+            let templ = ObjectTemplate::new(self);
+            Global::new(self, templ)
+        });
+
+        template.clone()
+    }
+    fn set_obj_template<T: 'static>(
+        &mut self,
+        template: impl Handle<Data = ObjectTemplate>,
+    ) -> Option<Global<ObjectTemplate>> {
+        let global = Global::new(self, template);
+        let type_id = TypeId::of::<T>();
+
+        let templates = self.get_inner_mut::<ObjectTemplatesMap>(OBJECT_TEMPLATE_SLOT);
+        templates.insert(type_id, global)
+    }
+    fn init_templates(&mut self) {
+        super::element::set_element_template(self);
     }
     fn create_wrapped_object<T: GarbageCollected + Tag + 'static>(
         &mut self,
@@ -135,10 +229,12 @@ impl HandleScopeExt for HandleScope<'_> {
     where
         [(); { T::TAG } as usize]:,
     {
-        let template = self.get_template::<T>();
+        let template = self.get_fn_template::<T>();
         let template = Local::new(self, template);
         let func = template.get_function(self).unwrap();
         let obj = func.new_instance(self, &[]).unwrap();
+
+        assert!(obj.is_api_wrapper(), "Object is not an API wrapper");
 
         let heap = self.get_cpp_heap().unwrap();
         let member = unsafe { v8::cppgc::make_garbage_collected(heap, object) };
@@ -342,5 +438,26 @@ impl<T> Deref for SlotWrapper<T> {
 impl<T> DerefMut for SlotWrapper<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.data.as_mut() }
+    }
+}
+
+pub(crate) struct IsolatePtr {
+    isolate: *mut Isolate,
+}
+impl IsolatePtr {
+    pub fn new(isolate: *mut Isolate) -> Self {
+        Self { isolate }
+    }
+}
+impl Deref for IsolatePtr {
+    type Target = Isolate;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.isolate.as_ref().unwrap() }
+    }
+}
+impl DerefMut for IsolatePtr {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.isolate.as_mut().unwrap() }
     }
 }

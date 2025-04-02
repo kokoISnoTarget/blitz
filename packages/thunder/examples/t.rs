@@ -23,30 +23,14 @@ async fn main() {
 
     let mut document = JsDocument::new(isolate);
 
-    tokio::spawn(HtmlParser::parse_async(
-        &mut document,
-        "<html>
-    <body>
+    document.parse(
+        "<html><body>
+        <h1>Hello, World!</h1>
         <script>
-            console.log('Hello, World!');
+            let h1 = document.querySelector('h1').remove();
         </script>
-    </body>
-</html>",
-    ));
-    //     HtmlParser::parse(
-    //         &mut document,
-    //         "<html>
-    //     <body>
-    //         <script>
-    //             console.log('Hello, World!');
-    //         </script>
-    //     </body>
-    // </html>",
-    //     );
-
-    document.print_tree();
-
-    document.setup();
+        </body></html>",
+    );
 
     document.print_tree();
 

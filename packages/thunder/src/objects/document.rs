@@ -1,15 +1,23 @@
 use blitz_dom::BaseDocument;
-use html5ever::tokenizer::states::State::Doctype;
-use v8::{Context, Function, FunctionCallbackArguments, HandleScope, Local, Object, ReturnValue};
 
-use super::{add_function_to_object, element::element_object};
+use v8::{
+    self, Context, Function, FunctionCallbackArguments, Global, HandleScope, Isolate, Local,
+    Object, ReturnValue, Value,
+};
+
+use crate::objects::IsolateExt;
+
+use super::{
+    add_function_to_object,
+    element::{element_object, set_element_template},
+};
 
 pub fn add_document(scope: &mut HandleScope<'_>, context: &Local<'_, Context>) {
     let document_name = v8::String::new(scope, "document").unwrap();
     let document_value = v8::Object::new(scope);
 
-    add_function_to_object(scope, &document_value, "debug", debug);
     add_function_to_object(scope, &document_value, "querySelector", query_selector);
+    add_function_to_object(scope, &document_value, "getElementById", get_element_by_id);
 
     let global = context.global(scope);
     global
@@ -27,7 +35,7 @@ fn query_selector(
     };
     let selector = selector.to_rust_string_lossy(scope);
 
-    let document = scope.get_slot::<BaseDocument>().unwrap();
+    let document = scope.document();
 
     match document.query_selector(&selector) {
         Ok(Some(query)) => {
@@ -46,12 +54,25 @@ fn query_selector(
     }
 }
 
-fn debug(
+fn get_element_by_id(
     scope: &mut HandleScope<'_>,
-    _args: FunctionCallbackArguments<'_>,
+    args: FunctionCallbackArguments<'_>,
     mut retval: ReturnValue<'_>,
 ) {
-    let document = scope.get_slot::<BaseDocument>().unwrap();
-    document.print_tree();
-    retval.set_undefined();
+    let Some(id) = args.get(0).to_string(scope) else {
+        return;
+    };
+    let id = id.to_rust_string_lossy(scope);
+
+    let document = scope.document();
+
+    match document.nodes_to_id.get(&id) {
+        Some(&element) => {
+            let object = element_object(scope, element as u32);
+            retval.set(object.into());
+        }
+        None => {
+            retval.set_null();
+        }
+    }
 }

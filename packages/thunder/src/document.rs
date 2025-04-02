@@ -1,3 +1,4 @@
+use crate::util::OneByteConstExt;
 use std::{
     cell::RefCell,
     ops::{Deref, DerefMut},
@@ -5,22 +6,46 @@ use std::{
     rc::Rc,
 };
 
-use crate::{net::ThunderProvider, objects::{self, add_console, add_document, IsolateExt}};
-use blitz_dom::BaseDocument;
-use blitz_traits::{Document, Viewport, net::Bytes};
-use v8::{
-    cppgc::{make_garbage_collected, shutdown_process, Heap}, Context, ContextOptions, ContextScope, CreateParams, Exception, FunctionCallbackArguments, FunctionTemplate, Global, HandleScope, Isolate, Local, NewStringType, ObjectTemplate, OwnedIsolate, ReturnValue
+use crate::objects::element::element_object;
+use crate::objects::event_object;
+use crate::{
+    HtmlParser, fast_str,
+    fetch_thread::init_fetch_thread,
+    objects::{self, IsolateExt, add_console, add_document, add_window},
 };
+use blitz_dom::BaseDocument;
+use blitz_traits::{Document, DomEvent, Viewport, net::Bytes};
+use tokio::runtime::Runtime;
+use v8::{
+    self, Context, ContextOptions, ContextScope, CreateParams, Exception, Function,
+    FunctionCallbackArguments, FunctionTemplate, Global, HandleScope, Isolate, Local,
+    NewStringType, Object, ObjectTemplate, OwnedIsolate, ReturnValue, Value,
+    cppgc::{Heap, make_garbage_collected, shutdown_process},
+    inspector::{ChannelImpl, V8Inspector, V8InspectorClientBase, V8InspectorClientImpl},
+    undefined,
+};
+use xml5ever::tendril::{Tendril, TendrilSink};
 
 pub struct JsDocument {
-    context: Global<Context>,
-    isolate: OwnedIsolate,
+    pub(crate) isolate: OwnedIsolate,
 }
 
 impl Document for JsDocument {
     type Doc = BaseDocument;
 
-    fn handle_event(&mut self, _event: &mut blitz_traits::DomEvent) {}
+    fn handle_event(&mut self, event: &mut blitz_traits::DomEvent) {
+        dbg!(event.name());
+        if let Some(node_event_listeners) =
+            self.isolate.event_listeners().get(&(event.target as u32))
+        {
+            dbg!("1");
+            if let Some(event_listener) = node_event_listeners.get(&event.name().to_string()) {
+                dbg!("2");
+                self.handle_js_event_listener(event, event_listener.clone());
+            }
+        }
+        self.isolate.document_mut().handle_event(event);
+    }
 
     fn id(&self) -> usize {
         self.as_ref().id()
@@ -31,113 +56,96 @@ impl Document for JsDocument {
         false
     }
 }
-impl<'a> From<JsDocument> for BaseDocument {
-    fn from(mut js_doc: JsDocument<'a>) -> BaseDocument {
+impl From<JsDocument> for BaseDocument {
+    fn from(mut js_doc: JsDocument) -> BaseDocument {
         js_doc.isolate.clear_document()
     }
 }
-impl<'a> AsRef<BaseDocument> for JsDocument<'a> {
+impl AsRef<BaseDocument> for JsDocument {
     fn as_ref(&self) -> &BaseDocument {
         self.isolate.document()
     }
 }
-impl<'a> AsMut<BaseDocument> for JsDocument<'a> {
+impl AsMut<BaseDocument> for JsDocument {
     fn as_mut(&mut self) -> &mut BaseDocument {
         self.isolate.document_mut()
     }
 }
 
 impl JsDocument {
+    pub async fn parse(&mut self, source: &str) {
+        let parser = self.isolate.parser();
+        parser.input_buffer.push_back(source.into());
+        parser.finish_async().await;
+    }
     pub fn new(mut isolate: OwnedIsolate) -> JsDocument {
-        let document = BaseDocument::new(Viewport::default());
+        let mut document = BaseDocument::new(Viewport::default());
+
+        document.add_user_agent_stylesheet(blitz_dom::DEFAULT_CSS);
 
         isolate.set_document(document);
         isolate.setup_templates();
+        isolate.setup_listeners();
 
         let mut scope = HandleScope::new(&mut isolate);
         let context = Context::new(&mut scope, ContextOptions::default());
-
         Self::initialize(&mut scope, context);
+
         let context = Global::new(&mut scope, context);
+        scope.set_slot(context);
 
         drop(scope);
 
-        JsDocument { context, isolate }
+        let parser = HtmlParser::new(isolate.as_mut());
+        isolate.set_parser(parser);
+
+        init_fetch_thread(&mut isolate);
+
+        JsDocument { isolate }
     }
 
     // Setup global
     pub fn initialize(scope: &mut HandleScope<'_, ()>, context: Local<Context>) {
         let mut scope = ContextScope::new(scope, context);
 
-        add_console(&mut scope, &context);
         add_document(&mut scope, &context);
+        add_console(&mut scope, &context);
+        add_window(&mut scope, &context);
     }
 
-    pub fn setup(&mut self) {
-        let handle_scope = &mut HandleScope::new(&mut self.isolate);
-
-        let context = Context::new(handle_scope, ContextOptions::default());
-        let scope = &mut ContextScope::new(handle_scope, context);
-
-        add_console(scope, &context);
-        add_document(scope, &context);
-
-        #[cfg(feature = "tracing")]
-        tracing::info!("Set global scope");
-
-        let source = v8::String::new(
-            scope,
-            r#"
-            let body = document.querySelector('body');
-            console.log(body.remove());
-            "#,
-        )
-        .unwrap();
-        execute_script(scope, source);
-    }
-
-    pub(crate) fn add_script(
+    pub(crate) fn handle_js_event_listener(
         &mut self,
-        script: Bytes,
-        is_module: bool,
-        executed_after_fetch: bool,
+        event: &mut DomEvent,
+        listener: Global<Value>,
     ) {
-        let scope = &mut v8::HandleScope::new(&mut self.isolate);
-        let string = v8::String::new_from_utf8(scope, &script, NewStringType::Normal).unwrap();
+        #[cfg(feature = "tracing")]
+        tracing::info!("using event listener {:?}", event);
+        let context = self.isolate.remove_slot::<Global<Context>>().unwrap();
+        let mut scope = HandleScope::with_context(&mut self.isolate, &context);
 
-        if is_module {
-            v8::Script::compile(scope, source, origin)
-            v8::Module::create_synthetic_module(scope, module_name, export_names, evaluation_steps)
+        let even_object = event_object(&mut scope, event.clone());
+        let receiver = element_object(&mut scope, event.target as u32);
+
+        let listener = Local::new(&mut scope, listener);
+        if listener.is_function() {
+            let function: Local<Function> = listener.cast();
+
+            function.call(&mut scope, receiver.cast(), &[even_object.cast()]);
+        } else if listener.is_object() {
+            let object: Local<Object> = listener.cast();
+            let func_name = fast_str!("handleEvent").to_v8(&mut scope);
+            let func = object.get(&mut scope, func_name.cast());
+            if let Some(func) = func
+                && func.is_function()
+            {
+                let function: Local<Function> = func.cast();
+                function.call(&mut scope, receiver.cast(), &[even_object.cast()]);
+            }
         }
+
+        scope.set_slot(context);
     }
 }
-
-fn execute_script(
-    context_scope: &mut v8::ContextScope<v8::HandleScope>,
-    script: v8::Local<v8::String>,
-) {
-    let scope = &mut v8::HandleScope::new(context_scope);
-    let mut try_catch = v8::TryCatch::new(scope);
-
-    let script =
-        v8::Script::compile(&mut try_catch, script, None).expect("failed to compile script");
-
-    let result = script.run(&mut try_catch);
-    let Some(result) = result else {
-        let exception_string = try_catch
-            .stack_trace()
-            .or_else(|| try_catch.exception())
-            .map_or_else(
-                || "no stack trace".into(),
-                |value| value.to_rust_string_lossy(&mut try_catch),
-            );
-
-        panic!("{exception_string}");
-    };
-    #[cfg(feature = "tracing")]
-    tracing::info!("Executed script");
-}
-
 impl Deref for JsDocument {
     type Target = BaseDocument;
 

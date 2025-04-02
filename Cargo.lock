@@ -5867,9 +5867,10 @@ name = "thunder"
 version = "0.1.0"
 dependencies = [
  "blitz-dom",
+ "blitz-renderer-vello",
+ "blitz-shell",
  "blitz-traits",
  "data-url",
- "futures",
  "html5ever",
  "reqwest",
  "thiserror 1.0.69",
@@ -5878,6 +5879,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "v8",
+ "winit",
  "xml5ever",
 ]
 
@@ -5968,7 +5970,9 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.52.0",
