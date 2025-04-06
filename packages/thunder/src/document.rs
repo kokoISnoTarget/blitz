@@ -33,18 +33,28 @@ pub struct JsDocument {
 impl Document for JsDocument {
     type Doc = BaseDocument;
 
-    fn handle_event(&mut self, event: &mut blitz_traits::DomEvent) {
-        dbg!(event.name());
-        if let Some(node_event_listeners) =
-            self.isolate.event_listeners().get(&(event.target as u32))
-        {
-            dbg!("1");
-            if let Some(event_listener) = node_event_listeners.get(&event.name().to_string()) {
-                dbg!("2");
-                self.handle_js_event_listener(event, event_listener.clone());
+    fn handle_event(&mut self, event: &mut blitz_traits::DomEvent) -> bool {
+        let mut chain = if event.bubbles {
+            self.isolate.document().node_chain(event.target).into_iter()
+        } else {
+            vec![event.target].into_iter()
+        };
+
+        while let Some(next) = chain.next() {
+            if let Some(node_event_listeners) = self.isolate.event_listeners().get(&(next as u32)) {
+                if let Some(event_listener) = node_event_listeners.get(&event.name().to_string()) {
+                    if self.handle_js_event_listener(event, event_listener.clone()) {
+                        return true;
+                    }
+                }
+            }
+            event.target = next;
+            if self.isolate.document_mut().handle_event(event) {
+                dbg!("rr");
+                return true;
             }
         }
-        self.isolate.document_mut().handle_event(event);
+        false
     }
 
     fn id(&self) -> usize {
@@ -117,7 +127,8 @@ impl JsDocument {
         &mut self,
         event: &mut DomEvent,
         listener: Global<Value>,
-    ) {
+    ) -> bool {
+        let mut handled = false;
         #[cfg(feature = "tracing")]
         tracing::info!("using event listener {:?}", event);
         let context = self.isolate.remove_slot::<Global<Context>>().unwrap();
@@ -127,23 +138,35 @@ impl JsDocument {
         let receiver = element_object(&mut scope, event.target as u32);
 
         let listener = Local::new(&mut scope, listener);
+
         if listener.is_function() {
+            dbg!("fn");
             let function: Local<Function> = listener.cast();
 
             function.call(&mut scope, receiver.cast(), &[even_object.cast()]);
+            handled = true;
+            dbg!(
+                function
+                    .get_name(&mut scope)
+                    .to_rust_string_lossy(&mut scope)
+            );
         } else if listener.is_object() {
+            dbg!("fnobj");
             let object: Local<Object> = listener.cast();
             let func_name = fast_str!("handleEvent").to_v8(&mut scope);
             let func = object.get(&mut scope, func_name.cast());
             if let Some(func) = func
                 && func.is_function()
             {
+                dbg!("fnobj_fn");
                 let function: Local<Function> = func.cast();
-                function.call(&mut scope, receiver.cast(), &[even_object.cast()]);
+                dbg!(function.call(&mut scope, receiver.cast(), &[even_object.cast()]));
+                handled = true;
             }
         }
 
         scope.set_slot(context);
+        dbg!(handled)
     }
 }
 impl Deref for JsDocument {

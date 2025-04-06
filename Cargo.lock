@@ -5873,7 +5873,6 @@ dependencies = [
  "data-url",
  "html5ever",
  "reqwest",
- "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -9,7 +9,7 @@ pub(crate) use mouse::{handle_click, handle_mousedown, handle_mousemove};
 
 use crate::BaseDocument;
 
-pub(crate) fn handle_event(doc: &mut BaseDocument, event: &mut DomEvent) {
+pub(crate) fn handle_event(doc: &mut BaseDocument, event: &mut DomEvent) -> bool {
     let target_node_id = event.target;
 
     match &event.data {
@@ -39,5 +39,7 @@ pub(crate) fn handle_event(doc: &mut BaseDocument, event: &mut DomEvent) {
         DomEventData::Ime(event) => {
             handle_ime_event(doc, event.clone());
         }
+        DomEventData::KeyDown(_) | DomEventData::KeyUp(_) => return false,
     }
+    true
 }

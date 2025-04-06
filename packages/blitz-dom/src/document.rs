@@ -156,7 +156,7 @@ fn make_device(viewport: &Viewport) -> Device {
 
 impl Document for BaseDocument {
     type Doc = Self;
-    fn handle_event(&mut self, event: &mut DomEvent) {
+    fn handle_event(&mut self, event: &mut DomEvent) -> bool {
         handle_event(self, event)
     }
 

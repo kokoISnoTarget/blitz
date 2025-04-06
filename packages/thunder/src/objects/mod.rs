@@ -14,6 +14,9 @@ pub use util::*;
 
 mod tag {
     pub const ELEMENT: u16 = 0x0001;
+    pub const EVENT: u16 = 0x0002;
 }
+pub use tag::*;
+pub use util::empty;
 
 use v8::{Context, HandleScope, Local};

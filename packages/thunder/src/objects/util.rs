@@ -461,3 +461,10 @@ impl DerefMut for IsolatePtr {
         unsafe { self.isolate.as_mut().unwrap() }
     }
 }
+
+pub fn empty(
+    _scope: &mut HandleScope<'_>,
+    _args: FunctionCallbackArguments<'_>,
+    _ret: ReturnValue,
+) {
+}

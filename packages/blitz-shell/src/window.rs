@@ -473,13 +473,28 @@ impl<Doc: Document<Doc = D>, Rend: DocumentRenderer<Doc = D>> View<Doc, Rend> {
                         self.request_redraw();
                     }
                     _ => {
-                        if let Some(focus_node_id) = self.doc.as_ref().get_focussed_node_id() {
+                    let doc = self.doc.as_ref();
+                        let target_id = doc.get_focussed_node_id()
+                                .or_else(|| doc.query_selector("body").unwrap())
+                                .unwrap_or_else(|| doc.root_element().id);
+
+                            let key_event = winit_key_event_to_blitz(&event, self.keyboard_modifiers.state());
+
+                            // https://w3c.github.io/uievents/#keypress-event-order
+                            if event.state.is_pressed() {
+                                self.doc
+                                    .handle_event(&mut DomEvent::new(
+                                        target_id,
+                                        DomEventData::KeyDown(key_event.clone())
+                                    ));
+                            }
                             self.doc.handle_event(&mut DomEvent::new(
-                                focus_node_id,
-                                DomEventData::KeyPress(winit_key_event_to_blitz(&event, self.keyboard_modifiers.state()))
+                                target_id,
+                                DomEventData::KeyPress(key_event)
                             ));
+
                             self.request_redraw();
-                        }
+
                     }
                 }
             }

@@ -269,6 +269,8 @@ impl Document for DioxusDocument {
             // TODO: Implement IME and Hover events handling
             DomEventData::Ime(_) => {}
             DomEventData::Hover => {}
+            DomEventData::KeyDown(_) => {}
+            DomEventData::KeyUp(_) => {}
         }
 
         if !event.cancelable || !prevent_default {

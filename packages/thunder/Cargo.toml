@@ -18,7 +18,6 @@ tracing-subscriber = { optional = true, version = "*" }
 tokio = { features = ["full"], workspace = true }
 reqwest = { workspace = true }
 data-url = { workspace = true }
-thiserror = { workspace = true }
 
 [dev-dependencies]
 blitz-shell = { path = "../blitz-shell" }
