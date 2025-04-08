@@ -231,7 +231,9 @@ impl FetchThread {
         FetchThread(sender)
     }
     pub fn fetch(&self, options: ScriptOptions) {
-        self.0.send(ToFetch::FetchScript(Box::new(options)));
+        self.0
+            .blocking_send(ToFetch::FetchScript(Box::new(options)))
+            .unwrap();
     }
 }
 

@@ -1,6 +1,6 @@
 use v8::{
     Context, Function, FunctionCallbackArguments, HandleScope, Integer, Local, Number, Object,
-    ReturnValue, Uint32,
+    ReturnValue,
 };
 
 pub fn add_console(scope: &mut HandleScope<'_>, context: &Local<'_, Context>) {

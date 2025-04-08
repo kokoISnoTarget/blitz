@@ -1,4 +1,4 @@
-use crate::util::OneByteConstExt;
+use crate::{objects::HandleScopeExt, util::OneByteConstExt};
 use std::{
     cell::RefCell,
     ops::{Deref, DerefMut},
@@ -50,7 +50,6 @@ impl Document for JsDocument {
             }
             event.target = next;
             if self.isolate.document_mut().handle_event(event) {
-                dbg!("rr");
                 return true;
             }
         }
@@ -117,7 +116,7 @@ impl JsDocument {
     // Setup global
     pub fn initialize(scope: &mut HandleScope<'_, ()>, context: Local<Context>) {
         let mut scope = ContextScope::new(scope, context);
-
+        scope.init_templates();
         add_document(&mut scope, &context);
         add_console(&mut scope, &context);
         add_window(&mut scope, &context);
@@ -140,25 +139,19 @@ impl JsDocument {
         let listener = Local::new(&mut scope, listener);
 
         if listener.is_function() {
-            dbg!("fn");
             let function: Local<Function> = listener.cast();
 
-            function.call(&mut scope, receiver.cast(), &[even_object.cast()]);
+            function
+                .call(&mut scope, receiver.cast(), &[even_object.cast()])
+                .unwrap();
             handled = true;
-            dbg!(
-                function
-                    .get_name(&mut scope)
-                    .to_rust_string_lossy(&mut scope)
-            );
         } else if listener.is_object() {
-            dbg!("fnobj");
             let object: Local<Object> = listener.cast();
             let func_name = fast_str!("handleEvent").to_v8(&mut scope);
             let func = object.get(&mut scope, func_name.cast());
             if let Some(func) = func
                 && func.is_function()
             {
-                dbg!("fnobj_fn");
                 let function: Local<Function> = func.cast();
                 dbg!(function.call(&mut scope, receiver.cast(), &[even_object.cast()]));
                 handled = true;
@@ -166,7 +159,7 @@ impl JsDocument {
         }
 
         scope.set_slot(context);
-        dbg!(handled)
+        handled
     }
 }
 impl Deref for JsDocument {

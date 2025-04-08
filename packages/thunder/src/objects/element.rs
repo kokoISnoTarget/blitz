@@ -33,18 +33,15 @@ pub fn debug(
     args: FunctionCallbackArguments<'_>,
     mut retval: ReturnValue<'_>,
 ) {
-    let obj = args.this();
-    let Some(element) = scope.unwrap_element_object::<Element>(obj) else {
-        #[cfg(feature = "tracing")]
-        tracing::warn!("Failed to unwrap element object while debugging it");
-        return;
-    };
-    let id = element.id;
+    let node_id = scope
+        .unwrap_element_object::<Element>(args.this())
+        .unwrap()
+        .id;
 
     #[cfg(feature = "tracing")]
-    tracing::info!("Element ID: {}", id);
+    tracing::info!("Element ID: {}", node_id);
 
-    retval.set_uint32(id);
+    retval.set_uint32(node_id);
 }
 
 pub fn remove(
@@ -52,8 +49,13 @@ pub fn remove(
     args: FunctionCallbackArguments<'_>,
     _retval: ReturnValue<'_>,
 ) {
-    let obj = args.this();
-    let node_id = get_node_id(scope, &obj);
+    //let obj = args.this();
+    //let node_id = get_node_id(scope, &obj);
+    let node_id = scope
+        .unwrap_element_object::<Element>(args.this())
+        .unwrap()
+        .id;
+
     #[cfg(feature = "tracing")]
     tracing::info!("Removing element with ID: {}", node_id);
 
@@ -65,11 +67,15 @@ fn add_event_listener(
     args: FunctionCallbackArguments<'_>,
     _retval: ReturnValue<'_>,
 ) {
-    let obj = args.this();
-    let node_id = get_node_id(scope, &obj);
+    //let obj = args.this();
+    //let node_id = get_node_id(scope, &obj);
+    let node_id = scope
+        .unwrap_element_object::<Element>(args.this())
+        .unwrap()
+        .id;
 
     #[cfg(feature = "tracing")]
-    tracing::info!(
+    tracing::warn!(
         "Adding event listener for node: {}, {:?}",
         node_id,
         scope.document().nodes[node_id as usize]
@@ -87,53 +93,31 @@ fn add_event_listener(
     element_listeners.insert(event_type, event_listener);
 }
 
-fn add_node_id(scope: &mut HandleScope<'_>, obj: &Object, id: u32) {
-    let data = Integer::new_from_unsigned(scope, id);
-    obj.set_internal_field(0, data.into());
-}
-
-fn get_node_id(scope: &mut HandleScope<'_>, obj: &Object) -> u32 {
-    let data = obj.get_internal_field(scope, 0).unwrap();
-    let id = data.cast::<Uint32>();
-    id.value()
-}
-
 pub fn set_element_template<'a>(scope: &mut HandleScope<'a>) {
-    let template = ObjectTemplate::new(scope);
-    template.set_internal_field_count(1);
+    let template = FunctionTemplate::new(scope, empty);
+    let proto = template.prototype_template(scope);
+    proto.set_internal_field_count(1);
 
     let remove_name = fast_str!("remove").to_v8(scope);
-    let remove_function = Function::new(scope, remove).unwrap();
-    template.set(remove_name.cast(), remove_function.cast());
+    let remove_function = FunctionTemplate::new(scope, remove);
+    proto.set(remove_name.cast(), remove_function.cast());
 
     let debug_name = fast_str!("debug").to_v8(scope);
-    let debug_function = Function::new(scope, debug).unwrap();
-    template.set(debug_name.cast(), debug_function.cast());
-
-    scope.set_obj_template::<Element>(template);
-}
-
-pub fn element_object<'a>(scope: &mut HandleScope<'a>, id: u32) -> Local<'a, Object> {
-    let template = v8::ObjectTemplate::new(scope);
-    template.set_internal_field_count(1);
-
-    let object = template.new_instance(scope).unwrap();
-
-    let remove_name = fast_str!("remove").to_v8(scope);
-    let remove_function = Function::new(scope, remove).unwrap();
-    object.set(scope, remove_name.cast(), remove_function.cast());
+    let debug_function = FunctionTemplate::new(scope, debug);
+    proto.set(debug_name.cast(), debug_function.cast());
 
     let add_event_listener_name = fast_str!("addEventListener").to_v8(scope);
-    let add_event_listener_function = Function::new(scope, add_event_listener).unwrap();
-    object.set(
-        scope,
+    let add_event_listener_function = FunctionTemplate::new(scope, add_event_listener);
+    proto.set(
         add_event_listener_name.cast(),
         add_event_listener_function.cast(),
     );
 
-    let int = Integer::new_from_unsigned(scope, id);
-    object.set_internal_field(0, int.into());
-    object
+    scope.set_fn_template::<Element>(template);
+}
+
+pub fn element_object<'a>(scope: &mut HandleScope<'a>, id: u32) -> Local<'a, Object> {
+    scope.create_wrapped_object(Element::new(id))
 }
 
 struct Element {

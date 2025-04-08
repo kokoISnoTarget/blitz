@@ -72,7 +72,7 @@ impl Document for DioxusDocument {
         self.inner.id()
     }
 
-    fn handle_event(&mut self, event: &mut DomEvent) {
+    fn handle_event(&mut self, event: &mut DomEvent) -> bool {
         let chain = self.inner.node_chain(event.target);
 
         set_event_converter(Box::new(NativeConverter {}));
@@ -274,8 +274,9 @@ impl Document for DioxusDocument {
         }
 
         if !event.cancelable || !prevent_default {
-            self.inner.as_mut().handle_event(event);
+            return self.inner.as_mut().handle_event(event);
         }
+        true
     }
 }
 

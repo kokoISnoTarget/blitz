@@ -1,7 +1,7 @@
 use super::*;
 use crate::util::todo;
 use blitz_traits::DomEvent;
-use v8::{HandleScope, Local, Object, cppgc::GarbageCollected};
+use v8::{FunctionTemplate, HandleScope, Local, Object, cppgc::GarbageCollected};
 
 pub struct EventObject(DomEvent);
 impl GarbageCollected for EventObject {
@@ -11,20 +11,16 @@ impl GarbageCollected for EventObject {
         None
     }
 }
+impl Tag for EventObject {
+    const TAG: u16 = super::EVENT;
+}
+pub fn set_event_template<'a>(scope: &mut HandleScope<'a>) {
+    let template = FunctionTemplate::new(scope, empty);
+    let proto = template.prototype_template(scope);
+    proto.set_internal_field_count(1);
+
+    scope.set_fn_template::<EventObject>(template);
+}
 pub fn event_object<'a>(scope: &mut HandleScope<'a>, event: DomEvent) -> Local<'a, Object> {
-    let templ = v8::FunctionTemplate::new(scope, empty);
-    let func = templ.get_function(scope).unwrap();
-    let obj = func.new_instance(scope, &[]).unwrap();
-
-    assert!(obj.is_api_wrapper());
-
-    let member = unsafe {
-        v8::cppgc::make_garbage_collected(scope.get_cpp_heap().unwrap(), EventObject(event))
-    };
-
-    unsafe {
-        v8::Object::wrap::<EVENT, EventObject>(scope, obj, &member);
-    }
-
-    obj
+    scope.create_wrapped_object(EventObject(event))
 }

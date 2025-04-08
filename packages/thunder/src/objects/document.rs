@@ -18,6 +18,7 @@ pub fn add_document(scope: &mut HandleScope<'_>, context: &Local<'_, Context>) {
 
     add_function_to_object(scope, &document_value, "querySelector", query_selector);
     add_function_to_object(scope, &document_value, "getElementById", get_element_by_id);
+    add_function_to_object(scope, &document_value, "debugTree", debug_tree);
 
     let global = context.global(scope);
     global
@@ -75,4 +76,12 @@ fn get_element_by_id(
             retval.set_null();
         }
     }
+}
+
+fn debug_tree(
+    scope: &mut HandleScope<'_>,
+    _args: FunctionCallbackArguments<'_>,
+    _retval: ReturnValue<'_>,
+) {
+    scope.document().print_tree();
 }

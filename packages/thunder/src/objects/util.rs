@@ -149,7 +149,7 @@ impl IsolateExt for Isolate {
     }
 }
 
-pub trait HandleScopeExt {
+pub trait HandleScopeExt<'a> {
     fn get_fn_template<T: 'static>(&mut self) -> Global<FunctionTemplate>;
     fn set_fn_template<T: 'static>(
         &mut self,
@@ -165,7 +165,7 @@ pub trait HandleScopeExt {
     fn create_wrapped_object<T: GarbageCollected + Tag + 'static>(
         &mut self,
         object: T,
-    ) -> Local<Object>
+    ) -> Local<'a, Object>
     where
         [(); { T::TAG } as usize]:;
     fn unwrap_element_object<T: GarbageCollected + Tag + 'static>(
@@ -176,7 +176,7 @@ pub trait HandleScopeExt {
         [(); { T::TAG } as usize]:;
 }
 
-impl HandleScopeExt for HandleScope<'_> {
+impl<'a> HandleScopeExt<'a> for HandleScope<'a> {
     fn get_fn_template<T: 'static>(&mut self) -> Global<FunctionTemplate> {
         let mut templates = self.get_inner_wrapped::<FunctionTemplatesMap>(FUNCTION_TEMPLATE_SLOT);
         let type_id = TypeId::of::<T>();
@@ -221,11 +221,12 @@ impl HandleScopeExt for HandleScope<'_> {
     }
     fn init_templates(&mut self) {
         super::element::set_element_template(self);
+        super::event::set_event_template(self);
     }
     fn create_wrapped_object<T: GarbageCollected + Tag + 'static>(
         &mut self,
         object: T,
-    ) -> Local<Object>
+    ) -> Local<'a, Object>
     where
         [(); { T::TAG } as usize]:,
     {
