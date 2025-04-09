@@ -21,11 +21,12 @@ tokio = { features = ["full"], workspace = true }
 reqwest = { workspace = true }
 data-url = { workspace = true }
 
-[dev-dependencies]
-blitz-shell = { path = "../blitz-shell" }
+blitz-shell = { path = "../blitz-shell", features = ["menu"] }
 blitz-renderer-vello = { path = "../blitz-renderer-vello" }
 winit = { workspace = true }
 
+
+[dev-dependencies]
 
 # Features
 [features]

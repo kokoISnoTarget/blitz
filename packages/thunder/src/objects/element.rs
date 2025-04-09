@@ -1,16 +1,3 @@
-use std::ffi::c_void;
-
-use blitz_dom::BaseDocument;
-use v8::cppgc::GarbageCollected;
-use v8::{
-    self, Function, FunctionBuilder, FunctionCallbackArguments, FunctionTemplate, Global,
-    HandleScope, Integer, Local, Object, ObjectTemplate, ReturnValue, Uint32,
-};
-
-use crate::fast_str;
-use crate::util::OneByteConstExt;
-
-use super::util::{add_rust_element_to_object, get_rust_element_from_object};
 use super::*;
 
 //pub fn element_object<'a>(scope: &mut HandleScope<'a>, id: u32) -> Local<'a, Object> {

@@ -1,7 +1,5 @@
 use super::*;
-use crate::util::todo;
 use blitz_traits::DomEvent;
-use v8::{FunctionTemplate, HandleScope, Local, Object, cppgc::GarbageCollected};
 
 pub struct EventObject(DomEvent);
 impl GarbageCollected for EventObject {

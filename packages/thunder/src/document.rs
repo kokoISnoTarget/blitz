@@ -1,4 +1,7 @@
-use crate::{objects::HandleScopeExt, util::OneByteConstExt};
+use crate::{
+    objects::{HandleScopeExt, init_js_files},
+    util::OneByteConstExt,
+};
 use std::{
     cell::RefCell,
     ops::{Deref, DerefMut},
@@ -102,7 +105,6 @@ impl JsDocument {
 
         let context = Global::new(&mut scope, context);
         scope.set_slot(context);
-
         drop(scope);
 
         let parser = HtmlParser::new(isolate.as_mut());
@@ -120,6 +122,8 @@ impl JsDocument {
         add_document(&mut scope, &context);
         add_console(&mut scope, &context);
         add_window(&mut scope, &context);
+
+        init_js_files(&mut scope);
     }
 
     pub(crate) fn handle_js_event_listener(
@@ -180,5 +184,6 @@ impl Drop for JsDocument {
         let isolate = &mut self.isolate;
         isolate.clear_document();
         isolate.clear_templates();
+        isolate.clear_listeners();
     }
 }

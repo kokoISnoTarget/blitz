@@ -7,15 +7,7 @@ use std::{
     ptr::NonNull,
 };
 
-use blitz_dom::BaseDocument;
-use v8::{
-    self, External, Function, FunctionCallback, FunctionCallbackArguments, FunctionTemplate,
-    Global, Handle, HandleScope, Isolate, Local, MapFnTo, Object, ObjectTemplate, ReturnValue,
-    Value,
-    cppgc::{GarbageCollected, Ptr},
-};
-
-use crate::{HtmlParser, fetch_thread::FetchThread};
+use super::*;
 
 const FUNCTION_TEMPLATE_SLOT: u32 = 0;
 const DOCUMENT_SLOT: u32 = 1;
@@ -155,11 +147,6 @@ pub trait HandleScopeExt<'a> {
         &mut self,
         template: impl Handle<Data = FunctionTemplate>,
     ) -> Option<Global<FunctionTemplate>>;
-    fn get_obj_template<T: 'static>(&mut self) -> Global<ObjectTemplate>;
-    fn set_obj_template<T: 'static>(
-        &mut self,
-        template: impl Handle<Data = ObjectTemplate>,
-    ) -> Option<Global<ObjectTemplate>>;
     fn init_templates(&mut self);
 
     fn create_wrapped_object<T: GarbageCollected + Tag + 'static>(
@@ -182,7 +169,7 @@ impl<'a> HandleScopeExt<'a> for HandleScope<'a> {
         let type_id = TypeId::of::<T>();
 
         let template = templates.entry(type_id).or_insert_with(|| {
-            let templ = FunctionTemplate::new(self, _constructor);
+            let templ = FunctionTemplate::new(self, empty);
             Global::new(self, templ)
         });
 
@@ -198,30 +185,10 @@ impl<'a> HandleScopeExt<'a> for HandleScope<'a> {
         let templates = self.get_inner_mut::<FunctionTemplatesMap>(FUNCTION_TEMPLATE_SLOT);
         templates.insert(type_id, global)
     }
-    fn get_obj_template<T: 'static>(&mut self) -> Global<ObjectTemplate> {
-        let mut templates = self.get_inner_wrapped::<ObjectTemplatesMap>(OBJECT_TEMPLATE_SLOT);
-        let type_id = TypeId::of::<T>();
-
-        let template = templates.entry(type_id).or_insert_with(|| {
-            let templ = ObjectTemplate::new(self);
-            Global::new(self, templ)
-        });
-
-        template.clone()
-    }
-    fn set_obj_template<T: 'static>(
-        &mut self,
-        template: impl Handle<Data = ObjectTemplate>,
-    ) -> Option<Global<ObjectTemplate>> {
-        let global = Global::new(self, template);
-        let type_id = TypeId::of::<T>();
-
-        let templates = self.get_inner_mut::<ObjectTemplatesMap>(OBJECT_TEMPLATE_SLOT);
-        templates.insert(type_id, global)
-    }
     fn init_templates(&mut self) {
         super::element::set_element_template(self);
         super::event::set_event_template(self);
+        super::node_list::set_node_list_template(self);
     }
     fn create_wrapped_object<T: GarbageCollected + Tag + 'static>(
         &mut self,
@@ -252,115 +219,6 @@ impl<'a> HandleScopeExt<'a> for HandleScope<'a> {
         [(); { T::TAG } as usize]:,
     {
         unsafe { v8::Object::unwrap::<{ T::TAG }, T>(self, obj) }
-    }
-}
-
-fn _constructor(_scope: &mut HandleScope<'_>, _args: FunctionCallbackArguments, _ret: ReturnValue) {
-    // Implementation of the constructor function
-}
-
-pub fn element_template<'a>(scope: &mut HandleScope<'a, ()>) -> Local<'a, FunctionTemplate> {
-    FunctionTemplate::new(scope, _constructor)
-}
-
-pub trait Tag {
-    const TAG: u16;
-}
-
-pub fn wrap_element_object<'a, T: GarbageCollected + Tag + 'static>(
-    scope: &mut v8::HandleScope<'a>,
-    t: T,
-) -> v8::Local<'a, v8::Object>
-where
-    [(); { T::TAG } as usize]:,
-{
-    // This is from https://github.com/denoland/deno_core/blob/b37d41fc036653d4dccb0cf6992abed94168f5d8/core/cppgc.rs#L47
-    // let obj = match templates.get::<T>() {
-    // Some(templ) => {
-    // let templ = v8::Local::new(scope, templ);
-    // let inst = templ.instance_template(scope);
-    // inst.new_instance(scope).unwrap()
-    // }
-    // _ => {
-    // let templ = v8::Local::new(scope, state.cppgc_template.borrow().as_ref().unwrap());
-    // let func = templ.get_function(scope).unwrap();
-    // func.new_instance(scope, &[]).unwrap()
-    // }
-    // };
-
-    let template = element_template(scope);
-    let func = template.get_function(scope).unwrap();
-    let obj = func.new_instance(scope, &[]).unwrap();
-
-    let heap = scope.get_cpp_heap().unwrap();
-
-    let member = unsafe { v8::cppgc::make_garbage_collected(heap, t) };
-
-    unsafe {
-        v8::Object::wrap::<{ T::TAG }, T>(scope, obj, &member);
-    }
-    obj
-}
-
-pub fn unwrap_element_object<T: GarbageCollected + Tag>(
-    isolate: &mut Isolate,
-    obj: Local<Object>,
-) -> Option<Ptr<T>>
-where
-    [(); { T::TAG } as usize]:,
-{
-    unsafe { v8::Object::unwrap::<{ T::TAG }, T>(isolate, obj) }
-}
-
-pub fn add_rust_element_to_object<T>(scope: &mut HandleScope<'_>, obj: &Local<Object>, element: T) {
-    let boxed_element = Box::new(element);
-    let ptr = Box::into_raw(boxed_element);
-
-    let external = External::new(scope, ptr as *mut c_void);
-    obj.set_internal_field(0, external.into());
-}
-
-pub fn get_rust_element_from_object<'a, T>(
-    scope: &'a mut HandleScope<'_>,
-    obj: &'a Local<Object>,
-) -> Option<RustElement<'a, T>> {
-    let external = obj.get_internal_field(scope, 0)?;
-    let ptr = external.try_cast::<External>().ok()?.value() as *mut T;
-
-    Some(RustElement::new(ptr))
-}
-pub fn remove_rust_element_from_object<T>(
-    scope: &mut HandleScope<'_>,
-    obj: &Local<Object>,
-) -> Option<T> {
-    let external = obj.get_internal_field(scope, 0)?;
-    let ptr = external.try_cast::<External>().ok()?.value() as *mut T;
-    let element = unsafe { Box::from_raw(ptr) };
-    Some(*element)
-}
-
-pub struct RustElement<'a, T> {
-    element: *mut T,
-    _marker: std::marker::PhantomData<&'a T>,
-}
-impl<'a, T> RustElement<'a, T> {
-    pub fn new(element: *mut T) -> Self {
-        Self {
-            element,
-            _marker: std::marker::PhantomData,
-        }
-    }
-}
-impl<'a, T> Deref for RustElement<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.element }
-    }
-}
-impl<'a, T> DerefMut for RustElement<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.element }
     }
 }
 

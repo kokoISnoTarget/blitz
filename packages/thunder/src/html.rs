@@ -25,7 +25,6 @@ use blitz_traits::net::{Request, SharedProvider};
 use html5ever::{
     ParseOpts, QualName,
     interface::{NodeOrText, QuirksMode},
-    tendril::TendrilSink,
     tokenizer::{BufferQueue, Tokenizer, TokenizerResult},
     tree_builder::TreeBuilder,
 };
@@ -33,9 +32,7 @@ use html5ever::{
     interface::{ElementFlags, TreeSink},
     tendril::StrTendril,
 };
-use url::Url;
 use v8::{Context, Global, HandleScope, Isolate, script_compiler::CompileOptions};
-use xml5ever::tendril::fmt::UTF8;
 
 /// Convert an html5ever Attribute which uses tendril for its value to a blitz Attribute
 /// which uses String.

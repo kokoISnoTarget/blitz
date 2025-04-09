@@ -1,18 +1,17 @@
-use std::{
-    ffi::c_void,
-    sync::{Arc, atomic::AtomicBool},
-};
+use std::{ffi::c_void, sync::Arc};
 
 use blitz_dom::net::Resource;
 use blitz_traits::net::{
     Bytes, DummyNetCallback, NetHandler, NetProvider, Request, SharedCallback,
 };
-use reqwest::header::{HeaderMap, HeaderName};
-use tokio::task::LocalSet;
+use reqwest::header::HeaderMap;
 use tokio::{
     runtime::Handle,
-    sync::mpsc::{Receiver, Sender, channel},
-    sync::oneshot::{Sender as OneshotSender, channel as oneshot_channel},
+    spawn,
+    sync::{
+        mpsc::{Receiver, Sender, channel},
+        oneshot::{Sender as OneshotSender, channel as oneshot_channel},
+    },
 };
 use url::Url;
 use v8::{
@@ -20,7 +19,7 @@ use v8::{
     script_compiler::{self, CompileOptions, NoCacheReason, Source},
 };
 
-use crate::{html::ShouldParse, objects::IsolateExt, util::todo};
+use crate::{html::ShouldParse, objects::IsolateExt};
 
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:60.0) Gecko/20100101 Firefox/81.0";
 
@@ -117,7 +116,7 @@ impl FetchThreadState {
                 ToFetch::SetCallbackForProvider(callback) => {
                     self.net_provider_callback = callback;
                 }
-                ToFetch::FetchScript(options) => {
+                ToFetch::FetchScript(_options) => {
                     todo!();
                 }
                 ToFetch::Quit => {
@@ -231,9 +230,15 @@ impl FetchThread {
         FetchThread(sender)
     }
     pub fn fetch(&self, options: ScriptOptions) {
-        self.0
-            .blocking_send(ToFetch::FetchScript(Box::new(options)))
-            .unwrap();
+        #[cfg(feature = "tracing")]
+        tracing::info!("FetchThread::fetch {options:?}");
+        let inner = self.0.clone();
+        spawn(async move {
+            inner
+                .send(ToFetch::FetchScript(Box::new(options)))
+                .await
+                .unwrap();
+        });
     }
 }
 
@@ -266,6 +271,7 @@ impl Response {
     }
 }
 
+#[derive(Debug)]
 pub struct ScriptOptions {
     pub url: Url,
     pub is_module: bool,

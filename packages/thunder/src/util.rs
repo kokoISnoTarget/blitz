@@ -13,7 +13,3 @@ impl OneByteConstExt for v8::OneByteConst {
         v8::String::new_from_onebyte_const(scope, self).unwrap()
     }
 }
-
-pub const fn todo<T>() -> T {
-    todo!()
-}
