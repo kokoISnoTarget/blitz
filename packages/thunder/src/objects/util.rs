@@ -24,7 +24,6 @@ type EventListeners = HashMap<u32, HashMap<String, Global<Value>>>;
 trait _IsolateExt {
     fn get_inner<T>(&self, slot: u32) -> &T;
     fn get_inner_mut<T>(&mut self, slot: u32) -> &mut T;
-    fn get_inner_wrapped<T>(&mut self, slot: u32) -> SlotWrapper<T>;
     fn set_inner<T>(&mut self, slot: u32, data: T);
     fn clear_inner<T>(&mut self, slot: u32) -> T;
 }
@@ -38,11 +37,6 @@ impl _IsolateExt for Isolate {
         let raw_ptr = self.get_data(slot);
         assert!(!raw_ptr.is_null(), "Data on slot {slot} is null");
         unsafe { &mut *(raw_ptr as *mut T) }
-    }
-    fn get_inner_wrapped<T>(&mut self, slot: u32) -> SlotWrapper<T> {
-        let raw_ptr = self.get_data(slot);
-        assert!(!raw_ptr.is_null());
-        SlotWrapper::new(raw_ptr as *mut T)
     }
     fn set_inner<T>(&mut self, slot: u32, data: T) {
         let ptr = Box::into_raw(Box::new(data));
@@ -77,6 +71,10 @@ pub trait IsolateExt {
     fn event_listeners_mut(&mut self) -> &mut EventListeners;
     fn setup_listeners(&mut self);
     fn clear_listeners(&mut self);
+
+    fn setup_import_map(&mut self);
+    fn import_map(&mut self) -> &mut ImportMap;
+    fn clear_import_map(&mut self);
 }
 impl IsolateExt for Isolate {
     fn document(&self) -> &BaseDocument {
@@ -139,41 +137,35 @@ impl IsolateExt for Isolate {
     fn clear_listeners(&mut self) {
         self.clear_inner::<EventListeners>(EVENT_LISTENERS_SLOT);
     }
+    fn setup_import_map(&mut self) {
+        todo!()
+    }
+    fn import_map(&mut self) -> &mut ImportMap {
+        todo!()
+    }
+    fn clear_import_map(&mut self) {
+        todo!()
+    }
 }
 
 pub trait HandleScopeExt<'a> {
-    fn get_fn_template<T: 'static>(&mut self) -> Global<FunctionTemplate>;
+    fn get_fn_template<T: 'static>(&mut self) -> Option<Global<FunctionTemplate>>;
     fn set_fn_template<T: 'static>(
         &mut self,
         template: impl Handle<Data = FunctionTemplate>,
     ) -> Option<Global<FunctionTemplate>>;
     fn init_templates(&mut self);
 
-    fn create_wrapped_object<T: GarbageCollected + Tag + 'static>(
-        &mut self,
-        object: T,
-    ) -> Local<'a, Object>
-    where
-        [(); { T::TAG } as usize]:;
-    fn unwrap_element_object<T: GarbageCollected + Tag + 'static>(
-        &mut self,
-        obj: Local<Object>,
-    ) -> Option<Ptr<T>>
+    fn unwrap_object<T: WrappedObject + 'static>(&mut self, obj: Local<Object>) -> Option<Ptr<T>>
     where
         [(); { T::TAG } as usize]:;
 }
 
 impl<'a> HandleScopeExt<'a> for HandleScope<'a> {
-    fn get_fn_template<T: 'static>(&mut self) -> Global<FunctionTemplate> {
-        let mut templates = self.get_inner_wrapped::<FunctionTemplatesMap>(FUNCTION_TEMPLATE_SLOT);
+    fn get_fn_template<T: 'static>(&mut self) -> Option<Global<FunctionTemplate>> {
+        let templates = self.get_inner::<FunctionTemplatesMap>(FUNCTION_TEMPLATE_SLOT);
         let type_id = TypeId::of::<T>();
-
-        let template = templates.entry(type_id).or_insert_with(|| {
-            let templ = FunctionTemplate::new(self, empty);
-            Global::new(self, templ)
-        });
-
-        template.clone()
+        templates.get(&type_id).cloned()
     }
     fn set_fn_template<T: 'static>(
         &mut self,
@@ -186,35 +178,14 @@ impl<'a> HandleScopeExt<'a> for HandleScope<'a> {
         templates.insert(type_id, global)
     }
     fn init_templates(&mut self) {
-        super::element::set_element_template(self);
-        super::event::set_event_template(self);
-        super::node_list::set_node_list_template(self);
+        //super::element::set_element_template(self);
+        //super::event::set_event_template(self);
+        //super::node_list::set_node_list_template(self);
+        Element::init(self);
+        EventObject::init(self);
+        NodeList::init(self);
     }
-    fn create_wrapped_object<T: GarbageCollected + Tag + 'static>(
-        &mut self,
-        object: T,
-    ) -> Local<'a, Object>
-    where
-        [(); { T::TAG } as usize]:,
-    {
-        let template = self.get_fn_template::<T>();
-        let template = Local::new(self, template);
-        let func = template.get_function(self).unwrap();
-        let obj = func.new_instance(self, &[]).unwrap();
-
-        assert!(obj.is_api_wrapper(), "Object is not an API wrapper");
-
-        let heap = self.get_cpp_heap().unwrap();
-        let member = unsafe { v8::cppgc::make_garbage_collected(heap, object) };
-        unsafe {
-            v8::Object::wrap::<{ T::TAG }, T>(self, obj, &member);
-        }
-        obj
-    }
-    fn unwrap_element_object<T: GarbageCollected + Tag>(
-        &mut self,
-        obj: Local<Object>,
-    ) -> Option<Ptr<T>>
+    fn unwrap_object<T: WrappedObject>(&mut self, obj: Local<Object>) -> Option<Ptr<T>>
     where
         [(); { T::TAG } as usize]:,
     {
@@ -277,29 +248,6 @@ impl BuildHasher for BuildTypeIdHasher {
     }
 }
 
-struct SlotWrapper<T> {
-    data: NonNull<T>,
-}
-impl<T> SlotWrapper<T> {
-    pub fn new(data: *mut T) -> Self {
-        Self {
-            data: NonNull::new(data).unwrap(),
-        }
-    }
-}
-impl<T> Deref for SlotWrapper<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { self.data.as_ref() }
-    }
-}
-impl<T> DerefMut for SlotWrapper<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.data.as_mut() }
-    }
-}
-
 pub(crate) struct IsolatePtr {
     isolate: *mut Isolate,
 }
@@ -321,9 +269,52 @@ impl DerefMut for IsolatePtr {
     }
 }
 
-pub fn empty(
-    _scope: &mut HandleScope<'_>,
-    _args: FunctionCallbackArguments<'_>,
-    _ret: ReturnValue,
-) {
+pub struct ImportMap {
+    map: HashMap<String, String>,
+}
+
+pub trait WrappedObject: GarbageCollected {
+    const TAG: u16;
+    fn init_template<'s>(scope: &mut HandleScope<'s>, proto: Local<ObjectTemplate>);
+    fn init_function(
+        _scope: &mut HandleScope<'_>,
+        _args: FunctionCallbackArguments<'_>,
+        _ret: ReturnValue,
+    ) {
+    }
+
+    fn init<'s>(scope: &mut HandleScope<'s>)
+    where
+        Self: Sized + 'static,
+    {
+        let template = FunctionTemplate::new(scope, Self::init_function);
+        let proto = template.prototype_template(scope);
+        proto.set_internal_field_count(1);
+
+        Self::init_template(scope, proto);
+
+        scope.set_fn_template::<Self>(template);
+    }
+
+    fn object<'s>(self, scope: &mut HandleScope<'s>) -> Local<'s, Object>
+    where
+        Self: Sized + 'static,
+        [(); { Self::TAG } as usize]:,
+    {
+        let template = scope
+            .get_fn_template::<Self>()
+            .expect("Objects should get initialized before first creation");
+        let template = Local::new(scope, template);
+        let func = template.get_function(scope).unwrap();
+        let obj = func.new_instance(scope, &[]).unwrap();
+
+        assert!(obj.is_api_wrapper(), "Object is not an API wrapper");
+
+        let heap = scope.get_cpp_heap().unwrap();
+        let member = unsafe { v8::cppgc::make_garbage_collected(heap, self) };
+        unsafe {
+            v8::Object::wrap::<{ Self::TAG }, Self>(scope, obj, &member);
+        }
+        obj
+    }
 }

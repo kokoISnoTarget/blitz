@@ -9,13 +9,14 @@ use tokio::{
     runtime::Handle,
     spawn,
     sync::{
-        mpsc::{Receiver, Sender, channel},
+        mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
         oneshot::{Sender as OneshotSender, channel as oneshot_channel},
     },
+    task::spawn_local,
 };
 use url::Url;
 use v8::{
-    Context, Global, HandleScope, Isolate, IsolateHandle,
+    Context, Global, HandleScope, Isolate, IsolateHandle, Value,
     script_compiler::{self, CompileOptions, NoCacheReason, Source},
 };
 
@@ -23,13 +24,14 @@ use crate::{html::ShouldParse, objects::IsolateExt};
 
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:60.0) Gecko/20100101 Firefox/81.0";
 
-pub fn init_fetch_thread(isolate: &mut Isolate) {
+pub async fn init_fetch_thread(isolate: &mut Isolate) {
     let handle = isolate.thread_safe_handle();
     let (send, recv) = oneshot_channel();
 
-    std::thread::spawn(|| fetch_thread_main(send, handle));
+    //std::thread::spawn(|| fetch_thread_main(send, handle));
+    spawn(async { fetch_thread_main(send, handle).await });
 
-    let (fetch_thread_sender, should_parse) = recv.blocking_recv().unwrap();
+    let (fetch_thread_sender, should_parse) = recv.await.unwrap();
     let fetch_thread = FetchThread::new(fetch_thread_sender.clone());
     isolate.set_fetch_thread(fetch_thread);
     let provider_impl = ProviderImpl::new(fetch_thread_sender);
@@ -41,12 +43,11 @@ pub fn init_fetch_thread(isolate: &mut Isolate) {
     tracing::info!("Fetch thread initialized");
 }
 
-#[tokio::main(flavor = "multi_thread")]
 async fn fetch_thread_main(
-    ret: OneshotSender<(Sender<ToFetch>, ShouldParse)>,
+    ret: OneshotSender<(UnboundedSender<ToFetch>, ShouldParse)>,
     isolate_handle: IsolateHandle,
 ) {
-    let (sender, message_recv) = channel(10);
+    let (sender, message_recv) = unbounded_channel();
     let message_sender = sender.clone();
 
     let should_parse = ShouldParse::new();
@@ -70,8 +71,6 @@ async fn fetch_thread_main(
 }
 
 enum ToFetch {
-    Empty,
-
     FetchForProvider(
         Box<(
             usize,
@@ -87,8 +86,8 @@ enum ToFetch {
 }
 
 struct FetchThreadState {
-    message_sender: Sender<ToFetch>,
-    message_recv: Receiver<ToFetch>,
+    message_sender: UnboundedSender<ToFetch>,
+    message_recv: UnboundedReceiver<ToFetch>,
     tokio_handle: Handle,
     isolate_handle: IsolateHandle,
 
@@ -101,13 +100,8 @@ struct FetchThreadState {
 impl FetchThreadState {
     async fn receive(&mut self) {
         while let Some(message) = self.message_recv.recv().await {
-            #[cfg(feature = "tracing")]
-            tracing::info!("Received message");
             match message {
-                ToFetch::Empty => {}
                 ToFetch::FetchForProvider(data) => {
-                    #[cfg(feature = "tracing")]
-                    tracing::info!("Fetching document for provider");
                     let (doc_id, request, handler) = *data;
                     let response = self.fetch_request(request).await;
                     let bytes = response.into_bytes();
@@ -116,9 +110,7 @@ impl FetchThreadState {
                 ToFetch::SetCallbackForProvider(callback) => {
                     self.net_provider_callback = callback;
                 }
-                ToFetch::FetchScript(_options) => {
-                    todo!();
-                }
+                ToFetch::FetchScript(_options) => {}
                 ToFetch::Quit => {
                     self.message_recv.close();
                     break;
@@ -133,7 +125,7 @@ impl FetchThreadState {
         });
         let data_ptr = Box::into_raw(data) as *mut c_void;
         if !self.isolate_handle.request_interrupt(callback, data_ptr) {
-            self.message_sender.send(ToFetch::Quit).await.unwrap();
+            self.message_sender.send(ToFetch::Quit).unwrap();
         }
         self.should_parse
             .0
@@ -179,7 +171,9 @@ fn callback_inner(isolate: &mut Isolate, callback_data: CallbackData) {
             CompileOptions::NoCompileOptions,
             NoCacheReason::NoReason,
         )
-        .unwrap();
+        .unwrap()
+        .evaluate(scope);
+        //.instantiate_module2(scope, callback, source_callback)
     } else {
         let script = script_compiler::compile(
             scope,
@@ -197,9 +191,9 @@ struct CallbackData {
     url: Url,
 }
 
-struct ProviderImpl(Sender<ToFetch>);
+struct ProviderImpl(UnboundedSender<ToFetch>);
 impl ProviderImpl {
-    pub fn new(fetch_thread_sender: Sender<ToFetch>) -> Self {
+    pub fn new(fetch_thread_sender: UnboundedSender<ToFetch>) -> Self {
         ProviderImpl(fetch_thread_sender)
     }
 }
@@ -212,33 +206,34 @@ impl NetProvider for ProviderImpl {
         request: blitz_traits::net::Request,
         handler: blitz_traits::net::BoxedHandler<Self::Data>,
     ) {
+        #[cfg(feature = "tracing")]
+        tracing::info!("ProviderImpl::fetch: {}", request.url.as_str());
         let content = Box::new((doc_id, request, handler));
-        let handle = Handle::current();
-        let sender = self.0.clone();
-        handle.spawn(async move {
-            sender
-                .send(ToFetch::FetchForProvider(content))
-                .await
-                .unwrap();
-        });
+
+        self.0.send(ToFetch::FetchForProvider(content)).unwrap();
     }
 }
 
-pub struct FetchThread(Sender<ToFetch>);
+pub struct FetchThread(UnboundedSender<ToFetch>);
 impl FetchThread {
-    pub fn new(sender: Sender<ToFetch>) -> Self {
+    pub fn new(sender: UnboundedSender<ToFetch>) -> Self {
         FetchThread(sender)
     }
     pub fn fetch(&self, options: ScriptOptions) {
         #[cfg(feature = "tracing")]
         tracing::info!("FetchThread::fetch {options:?}");
-        let inner = self.0.clone();
-        spawn(async move {
-            inner
-                .send(ToFetch::FetchScript(Box::new(options)))
-                .await
-                .unwrap();
-        });
+
+        self.0
+            .send(ToFetch::FetchScript(Box::new(options)))
+            .unwrap();
+    }
+    pub fn set_net_provider_callback(&self, callback: SharedCallback<Resource>) {
+        #[cfg(feature = "tracing")]
+        tracing::info!("FetchThread::set_net_provider_callback");
+
+        self.0
+            .send(ToFetch::SetCallbackForProvider(callback))
+            .unwrap();
     }
 }
 

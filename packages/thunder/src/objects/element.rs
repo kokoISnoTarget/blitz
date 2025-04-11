@@ -1,29 +1,11 @@
 use super::*;
 
-//pub fn element_object<'a>(scope: &mut HandleScope<'a>, id: u32) -> Local<'a, Object> {
-//    let obj_template = ObjectTemplate::new(scope);
-//    obj_template.set_internal_field_count(1);
-//
-//    let object = obj_template.new_instance(scope).unwrap();
-//
-//    add_node_id(scope, &object, id);
-//    //add_rust_element_to_object(scope, &object, self);
-//
-//    add_function_to_object(scope, &object, "debug", debug);
-//    add_function_to_object(scope, &object, "remove", remove);
-//
-//    object
-//}
-
 pub fn debug(
     scope: &mut HandleScope<'_>,
     args: FunctionCallbackArguments<'_>,
     mut retval: ReturnValue<'_>,
 ) {
-    let node_id = scope
-        .unwrap_element_object::<Element>(args.this())
-        .unwrap()
-        .id;
+    let node_id = scope.unwrap_object::<Element>(args.this()).unwrap().id;
 
     #[cfg(feature = "tracing")]
     tracing::info!("Element ID: {}", node_id);
@@ -38,10 +20,7 @@ pub fn remove(
 ) {
     //let obj = args.this();
     //let node_id = get_node_id(scope, &obj);
-    let node_id = scope
-        .unwrap_element_object::<Element>(args.this())
-        .unwrap()
-        .id;
+    let node_id = scope.unwrap_object::<Element>(args.this()).unwrap().id;
 
     #[cfg(feature = "tracing")]
     tracing::info!("Removing element with ID: {}", node_id);
@@ -56,10 +35,7 @@ fn add_event_listener(
 ) {
     //let obj = args.this();
     //let node_id = get_node_id(scope, &obj);
-    let node_id = scope
-        .unwrap_element_object::<Element>(args.this())
-        .unwrap()
-        .id;
+    let node_id = scope.unwrap_object::<Element>(args.this()).unwrap().id;
 
     #[cfg(feature = "tracing")]
     tracing::warn!(
@@ -80,38 +56,28 @@ fn add_event_listener(
     element_listeners.insert(event_type, event_listener);
 }
 
-pub fn set_element_template<'a>(scope: &mut HandleScope<'a>) {
-    let template = FunctionTemplate::new(scope, empty);
-    let proto = template.prototype_template(scope);
-    proto.set_internal_field_count(1);
-
-    let remove_name = fast_str!("remove").to_v8(scope);
-    let remove_function = FunctionTemplate::new(scope, remove);
-    proto.set(remove_name.cast(), remove_function.cast());
-
-    let debug_name = fast_str!("debug").to_v8(scope);
-    let debug_function = FunctionTemplate::new(scope, debug);
-    proto.set(debug_name.cast(), debug_function.cast());
-
-    let add_event_listener_name = fast_str!("addEventListener").to_v8(scope);
-    let add_event_listener_function = FunctionTemplate::new(scope, add_event_listener);
-    proto.set(
-        add_event_listener_name.cast(),
-        add_event_listener_function.cast(),
-    );
-
-    scope.set_fn_template::<Element>(template);
-}
-
-pub fn element_object<'a>(scope: &mut HandleScope<'a>, id: u32) -> Local<'a, Object> {
-    scope.create_wrapped_object(Element::new(id))
-}
-
-struct Element {
+pub struct Element {
     id: u32,
 }
-impl Tag for Element {
-    const TAG: u16 = super::tag::ELEMENT;
+impl WrappedObject for Element {
+    const TAG: u16 = super::ELEMENT;
+
+    fn init_template<'s>(scope: &mut HandleScope<'s>, proto: Local<ObjectTemplate>) {
+        let remove_name = fast_str!("remove").to_v8(scope);
+        let remove_function = FunctionTemplate::new(scope, remove);
+        proto.set(remove_name.cast(), remove_function.cast());
+
+        let debug_name = fast_str!("debug").to_v8(scope);
+        let debug_function = FunctionTemplate::new(scope, debug);
+        proto.set(debug_name.cast(), debug_function.cast());
+
+        let add_event_listener_name = fast_str!("addEventListener").to_v8(scope);
+        let add_event_listener_function = FunctionTemplate::new(scope, add_event_listener);
+        proto.set(
+            add_event_listener_name.cast(),
+            add_event_listener_function.cast(),
+        );
+    }
 }
 impl GarbageCollected for Element {
     fn trace(&self, _visitor: &v8::cppgc::Visitor) {}
@@ -121,7 +87,7 @@ impl GarbageCollected for Element {
     }
 }
 impl Element {
-    fn new(id: u32) -> Self {
+    pub fn new(id: u32) -> Self {
         Element { id }
     }
 }

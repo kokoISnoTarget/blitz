@@ -89,19 +89,16 @@ impl HtmlParser {
 pub struct HtmlSink {
     isolate: IsolatePtr,
     doc_id: usize,
-    net_provider: SharedProvider<Resource>,
     style_nodes: RefCell<Vec<usize>>,
 }
 
 impl HtmlSink {
     fn new(isolate: &mut Isolate) -> HtmlSink {
-        let net_provider = isolate.document().net_provider.clone();
         let doc_id = isolate.document().id();
 
         HtmlSink {
             isolate: isolate.ptr(),
             doc_id,
-            net_provider,
             style_nodes: RefCell::new(Vec::new()),
         }
     }
@@ -223,14 +220,14 @@ impl HtmlSink {
 
         if let (Some("stylesheet"), Some(href)) = (rel_attr, href_attr) {
             let url = self.isolate.document().resolve_url(href);
-            self.net_provider.fetch(
+            self.isolate.document().net_provider.fetch(
                 self.doc_id,
                 Request::get(url.clone()),
                 Box::new(CssHandler {
                     node: target_id,
                     source_url: url,
                     guard: self.isolate.document().guard.clone(),
-                    provider: self.net_provider.clone(),
+                    provider: self.isolate.document().net_provider.clone(),
                 }),
             );
         }

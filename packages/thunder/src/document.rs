@@ -1,33 +1,21 @@
 use crate::{
+    HtmlParser, fast_str,
+    fetch_thread::init_fetch_thread,
+    objects::{
+        Element, EventObject, IsolateExt, WrappedObject, add_console, add_document, add_window,
+    },
+};
+use crate::{
     objects::{HandleScopeExt, init_js_files},
     util::OneByteConstExt,
 };
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-    pin::Pin,
-    rc::Rc,
-};
-
-use crate::objects::element::element_object;
-use crate::objects::event_object;
-use crate::{
-    HtmlParser, fast_str,
-    fetch_thread::init_fetch_thread,
-    objects::{self, IsolateExt, add_console, add_document, add_window},
-};
 use blitz_dom::BaseDocument;
-use blitz_traits::{Document, DomEvent, Viewport, net::Bytes};
-use tokio::runtime::Runtime;
+use blitz_traits::{Document, DomEvent, Viewport};
+use std::ops::{Deref, DerefMut};
 use v8::{
-    self, Context, ContextOptions, ContextScope, CreateParams, Exception, Function,
-    FunctionCallbackArguments, FunctionTemplate, Global, HandleScope, Isolate, Local,
-    NewStringType, Object, ObjectTemplate, OwnedIsolate, ReturnValue, Value,
-    cppgc::{Heap, make_garbage_collected, shutdown_process},
-    inspector::{ChannelImpl, V8Inspector, V8InspectorClientBase, V8InspectorClientImpl},
-    undefined,
+    Context, ContextOptions, ContextScope, Function, Global, HandleScope, Local, Object,
+    OwnedIsolate, Value,
 };
-use xml5ever::tendril::{Tendril, TendrilSink};
 
 pub struct JsDocument {
     pub(crate) isolate: OwnedIsolate,
@@ -110,7 +98,9 @@ impl JsDocument {
         let parser = HtmlParser::new(isolate.as_mut());
         isolate.set_parser(parser);
 
-        init_fetch_thread(&mut isolate);
+        tokio::runtime::Handle::current().block_on(async {
+            init_fetch_thread(&mut isolate).await;
+        });
 
         JsDocument { isolate }
     }
@@ -137,8 +127,8 @@ impl JsDocument {
         let context = self.isolate.remove_slot::<Global<Context>>().unwrap();
         let mut scope = HandleScope::with_context(&mut self.isolate, &context);
 
-        let even_object = event_object(&mut scope, event.clone());
-        let receiver = element_object(&mut scope, event.target as u32);
+        let even_object = EventObject::new(event.clone()).object(&mut scope);
+        let receiver = Element::new(event.target as u32).object(&mut scope);
 
         let listener = Local::new(&mut scope, listener);
 

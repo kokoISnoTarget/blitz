@@ -34,7 +34,7 @@ fn query_selector(
 
     match document.query_selector(&selector) {
         Ok(Some(query)) => {
-            let object = element_object(scope, query as u32);
+            let object = Element::new(query as u32).object(scope);
             retval.set(object.into());
         }
         Ok(None) => {
@@ -61,8 +61,9 @@ fn query_selector_all(
     let document = scope.document();
 
     match document.query_selector_all(&selector) {
-        Ok(_nodes) => {
-            todo!()
+        Ok(nodes) => {
+            let node_list = NodeList::new(nodes).object(scope);
+            retval.set(node_list.cast());
         }
         Err(err) => {
             let error = v8::String::new(scope, &format!("{err:?}")).unwrap();
@@ -87,8 +88,8 @@ fn get_element_by_id(
 
     match document.nodes_to_id.get(&id) {
         Some(&element) => {
-            let object = element_object(scope, element as u32);
-            retval.set(object.into());
+            let object = Element::new(element as u32).object(scope);
+            retval.set(object.cast());
         }
         None => {
             retval.set_null();

@@ -6,12 +6,13 @@
 <body>
     <h1>Hello, World!</h1>
     <script>
-    let h1 = document.querySelector('h1');
+    let node_list = document.querySelectorAll('h1');
 
-    h1.addEventListener('click', () => {
-        h1.remove();
-        console.log('Clicked!');
-    });
+    let node_list_iter = globalThis.__internal_nodeListIterator(node_list);
+
+    for(const element of node_list_iter) {
+      console.log(element.debug())
+    }
     </script>
 </body>
 </html>

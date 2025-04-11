@@ -1,15 +1,9 @@
-use v8::{
-    Context, Exception, Function, FunctionCallbackArguments, FunctionTemplate, Global, HandleScope,
-    IndexedPropertyHandlerConfiguration, Intercepted, Number, Object, PropertyAttribute,
-    PropertyCallbackArguments, ReturnValue, Symbol, Uint32, cppgc::GarbageCollected, null,
-};
+use smallvec::SmallVec;
 
-use crate::{fast_str, util::OneByteConstExt};
+use super::*;
 
-use super::{HandleScopeExt, NODE_LIST, Tag, element::element_object, empty};
-
-struct NodeList {
-    array: Vec<u32>,
+pub struct NodeList {
+    array: SmallVec<[usize; 32]>,
 }
 impl GarbageCollected for NodeList {
     fn trace(&self, _visitor: &v8::cppgc::Visitor) {}
@@ -18,40 +12,38 @@ impl GarbageCollected for NodeList {
         None
     }
 }
-impl Tag for NodeList {
+impl WrappedObject for NodeList {
     const TAG: u16 = NODE_LIST;
+
+    fn init_template<'s>(scope: &mut HandleScope<'s>, proto: Local<ObjectTemplate>) {
+        let indexed_config = IndexedPropertyHandlerConfiguration::new().getter(index);
+        proto.set_indexed_property_handler(indexed_config);
+
+        let lenth_name = fast_str!("length").to_v8(scope);
+        let lenth_getter = FunctionTemplate::new(scope, length_getter);
+        proto.set_accessor_property(
+            lenth_name.cast(),
+            Some(lenth_getter.cast()),
+            None,
+            PropertyAttribute::READ_ONLY,
+        );
+
+        let item_name = fast_str!("item").to_v8(scope);
+        let item_function = FunctionTemplate::new(scope, item);
+        proto.set(item_name.cast(), item_function.cast());
+
+        let entries_name = fast_str!("entries").to_v8(scope);
+        let entries_function = FunctionTemplate::new(scope, entries);
+        proto.set(entries_name.cast(), entries_function.cast());
+    }
 }
 impl NodeList {
+    pub fn new(array: SmallVec<[usize; 32]>) -> NodeList {
+        NodeList { array }
+    }
     fn length(&self) -> u32 {
         self.array.len() as u32
     }
-}
-
-pub fn set_node_list_template(scope: &mut HandleScope) {
-    let template = FunctionTemplate::new(scope, empty);
-    let proto = template.prototype_template(scope);
-
-    let indexed_config = IndexedPropertyHandlerConfiguration::new().getter(index);
-    proto.set_indexed_property_handler(indexed_config);
-
-    let lenth_name = fast_str!("length").to_v8(scope);
-    let lenth_getter = FunctionTemplate::new(scope, length_getter);
-    proto.set_accessor_property(
-        lenth_name.cast(),
-        Some(lenth_getter.cast()),
-        None,
-        PropertyAttribute::READ_ONLY,
-    );
-
-    let item_name = fast_str!("item").to_v8(scope);
-    let item_function = FunctionTemplate::new(scope, item);
-    proto.set(item_name.cast(), item_function.cast());
-
-    let entries_name = fast_str!("entries").to_v8(scope);
-    let entries_function = FunctionTemplate::new(scope, entries);
-    proto.set(entries_name.cast(), entries_function.cast());
-
-    scope.set_fn_template::<NodeList>(template);
 }
 
 fn length_getter(
@@ -59,9 +51,7 @@ fn length_getter(
     args: FunctionCallbackArguments<'_>,
     mut retval: ReturnValue<'_>,
 ) {
-    let obj = scope
-        .unwrap_element_object::<NodeList>(args.this())
-        .unwrap();
+    let obj = scope.unwrap_object::<NodeList>(args.this()).unwrap();
     retval.set_uint32(obj.length());
 }
 
@@ -70,9 +60,7 @@ fn item(
     args: FunctionCallbackArguments<'_>,
     mut retval: ReturnValue<'_>,
 ) {
-    let obj = scope
-        .unwrap_element_object::<NodeList>(args.this())
-        .unwrap();
+    let obj = scope.unwrap_object::<NodeList>(args.this()).unwrap();
     let Ok(index) = args.get(0).try_cast::<Number>() else {
         let msg = fast_str!("No index provided").to_v8(scope);
         let exception = Exception::type_error(scope, msg);
@@ -85,7 +73,7 @@ fn item(
     };
 
     if index < obj.length() as i32 && index >= 0 {
-        let obj = element_object(scope, index as u32);
+        let obj = Element::new(index as u32).object(scope);
         retval.set(obj.cast());
     } else {
         retval.set_null();
@@ -116,13 +104,11 @@ fn index<'s>(
     args: PropertyCallbackArguments<'s>,
     mut ret: ReturnValue<'_>,
 ) -> Intercepted {
-    let node_list = scope
-        .unwrap_element_object::<NodeList>(args.this())
-        .unwrap();
+    let node_list = scope.unwrap_object::<NodeList>(args.this()).unwrap();
     let element_id = node_list.array.get(index as usize);
 
     if let Some(&element_id) = element_id {
-        ret.set(element_object(scope, element_id).cast());
+        ret.set(Element::new(element_id as u32).object(scope).cast());
     } else {
         ret.set_null();
     };

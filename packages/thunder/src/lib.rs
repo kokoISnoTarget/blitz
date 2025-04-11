@@ -9,8 +9,12 @@ mod objects;
 mod util;
 
 use blitz_renderer_vello::BlitzVelloRenderer;
-use blitz_shell::{BlitzApplication, BlitzShellEvent, WindowConfig, create_default_event_loop};
+use blitz_shell::{
+    BlitzApplication, BlitzShellEvent, BlitzShellNetCallback, WindowConfig,
+    create_default_event_loop,
+};
 use blitz_traits::net::Request;
+use objects::IsolateExt;
 use winit::window::WindowAttributes;
 
 pub use self::document::JsDocument;
@@ -30,7 +34,7 @@ pub fn launch_static_html(source: &str) {
     let heap = v8::cppgc::Heap::create(platform, v8::cppgc::HeapCreateParams::default());
     let isolate = v8::Isolate::new(v8::CreateParams::default().cpp_heap(heap));
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
@@ -62,8 +66,10 @@ pub fn launch_url(url: &str) {
 
     let heap = v8::cppgc::Heap::create(platform, v8::cppgc::HeapCreateParams::default());
     let isolate = v8::Isolate::new(v8::CreateParams::default().cpp_heap(heap));
+    #[cfg(feature = "tracing")]
+    tracing::info!("Init Isolate");
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
@@ -72,6 +78,13 @@ pub fn launch_url(url: &str) {
     let (send, recv) = tokio::sync::oneshot::channel();
 
     let mut doc = JsDocument::new(isolate);
+
+    tracing::info!("Init JsDocument");
+
+    doc.isolate
+        .fetch_thread()
+        .set_net_provider_callback(BlitzShellNetCallback::shared(event_loop.create_proxy()));
+
     doc.net_provider.fetch(
         0,
         Request::get(url::Url::parse(url).unwrap()),

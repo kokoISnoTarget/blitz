@@ -24,6 +24,7 @@ data-url = { workspace = true }
 blitz-shell = { path = "../blitz-shell", features = ["menu"] }
 blitz-renderer-vello = { path = "../blitz-renderer-vello" }
 winit = { workspace = true }
+smallvec = "1"
 
 
 [dev-dependencies]

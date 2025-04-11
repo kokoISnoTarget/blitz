@@ -1,8 +1,4 @@
-use v8::{
-    Context, Function, FunctionCallbackArguments, HandleScope, Integer, Local, Number, Object,
-    ReturnValue,
-};
-
+use super::*;
 pub fn add_console(scope: &mut HandleScope<'_>, context: &Local<'_, Context>) {
     let console = Object::new(scope);
 
@@ -66,13 +62,13 @@ const LOG_LEVELS: &[LoggerMode] = &[
 ];
 
 // https://console.spec.whatwg.org/#logger
-fn logger(scope: &mut HandleScope<'_>, args: FunctionCallbackArguments<'_>, mode: LoggerMode) {
+fn logger(scope: &mut HandleScope<'_>, args: FunctionCallbackArguments<'_>, _mode: LoggerMode) {
     let len = args.length();
     if len == 0 {
         return;
     }
 
-    let first = args.get(0);
+    let _first = args.get(0);
 
     // TODO: Maybe implement all
     let mut out = String::new();

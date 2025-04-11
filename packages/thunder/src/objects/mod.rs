@@ -8,30 +8,28 @@ pub mod window;
 
 pub use console::add_console;
 pub use document::add_document;
-pub use element::element_object;
-pub use event::event_object;
+pub use element::Element;
+pub use event::EventObject;
+pub use node_list::NodeList;
 pub use window::add_window;
 
 pub use util::*;
 
-mod tag {
-    pub trait Tag {
-        const TAG: u16;
-    }
-
+mod tags {
     pub const ELEMENT: u16 = 0x0001;
     pub const EVENT: u16 = 0x0002;
     pub const NODE_LIST: u16 = 0x0003;
 }
-pub use tag::*;
-pub use util::empty;
+pub use tags::*;
 
 pub use crate::{HtmlParser, fast_str, fetch_thread::FetchThread, util::OneByteConstExt};
 pub use blitz_dom::BaseDocument;
 use v8::{
-    Context, External, FunctionCallback, FunctionCallbackArguments, FunctionTemplate, Global,
-    Handle, HandleScope, Isolate, Local, MapFnTo, Object, ObjectTemplate, ReturnValue,
-    ScriptOrigin, Value, cppgc::GarbageCollected, cppgc::Ptr, script_compiler::Source,
+    Context, Exception, Function, FunctionCallback, FunctionCallbackArguments, FunctionTemplate,
+    Global, Handle, HandleScope, IndexedPropertyHandlerConfiguration, Integer, Intercepted,
+    Isolate, Local, MapFnTo, Number, Object, ObjectTemplate, PropertyAttribute,
+    PropertyCallbackArguments, ReturnValue, ScriptOrigin, Value, cppgc::GarbageCollected,
+    cppgc::Ptr, null, script_compiler::Source,
 };
 
 pub fn init_js_files(scope: &mut HandleScope) {
