@@ -76,4 +76,77 @@ impl BaseDocument {
         }));
         SelectorParser::parse_author_origin_no_namespace(input, &url_extra_data)
     }
+
+    /// Find the first node that matches the selector specified as a string,
+    /// starting from the specified node ID
+    /// Returns:
+    ///   - Err(_) if parsing the selector fails or the provided node_id is invalid
+    ///   - Ok(None) if nothing matches
+    ///   - Ok(Some(node_id)) with the first node ID that matches if one is found
+    pub fn query_selector_from<'input>(
+        &self,
+        node_id: usize,
+        selector: &'input str,
+    ) -> Result<Option<usize>, ParseError<'input>> {
+        let selector_list = self.try_parse_selector_list(selector)?;
+        Ok(self.query_selector_from_raw(node_id, &selector_list))
+    }
+
+    /// Find the first node that matches the selector(s) specified in selector_list,
+    /// starting from the specified node ID
+    pub fn query_selector_from_raw(
+        &self,
+        node_id: usize,
+        selector_list: &SelectorList<SelectorImpl>,
+    ) -> Option<usize> {
+        if let Some(start_node) = self.get_node(node_id) {
+            let mut result = None;
+            query_selector::<&Node, QueryFirst>(
+                start_node,
+                selector_list,
+                &mut result,
+                MayUseInvalidation::Yes,
+            );
+
+            result.map(|node| node.id)
+        } else {
+            None
+        }
+    }
+
+    /// Find all nodes that match the selector specified as a string,
+    /// starting from the specified node ID
+    /// Returns:
+    ///   - Err(_) if parsing the selector fails or the provided node_id is invalid
+    ///   - Ok(SmallVec<usize>) with all matching nodes otherwise
+    pub fn query_selector_all_from<'input>(
+        &self,
+        node_id: usize,
+        selector: &'input str,
+    ) -> Result<SmallVec<[usize; 32]>, ParseError<'input>> {
+        let selector_list = self.try_parse_selector_list(selector)?;
+        Ok(self.query_selector_all_from_raw(node_id, &selector_list))
+    }
+
+    /// Find all nodes that match the selector(s) specified in selector_list,
+    /// starting from the specified node ID
+    pub fn query_selector_all_from_raw(
+        &self,
+        node_id: usize,
+        selector_list: &SelectorList<SelectorImpl>,
+    ) -> SmallVec<[usize; 32]> {
+        if let Some(start_node) = self.get_node(node_id) {
+            let mut results = SmallVec::new();
+            query_selector::<&Node, QueryAll>(
+                start_node,
+                selector_list,
+                &mut results,
+                MayUseInvalidation::Yes,
+            );
+
+            results.iter().map(|node| node.id).collect()
+        } else {
+            SmallVec::new()
+        }
+    }
 }

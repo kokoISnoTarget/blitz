@@ -56,6 +56,67 @@ fn add_event_listener(
     element_listeners.insert(event_type, event_listener);
 }
 
+fn query_selector(
+    scope: &mut HandleScope<'_>,
+    args: FunctionCallbackArguments<'_>,
+    mut retval: ReturnValue<'_>,
+) {
+    let element = scope.unwrap_object::<Element>(args.this()).unwrap();
+    let node_id = element.id as usize;
+
+    let Some(selector) = args.get(0).to_string(scope) else {
+        return;
+    };
+    let selector = selector.to_rust_string_lossy(scope);
+
+    let document = scope.document();
+
+    match document.query_selector_from(node_id, &selector) {
+        Ok(Some(query)) => {
+            let object = Element::new(query as u32).object(scope);
+            retval.set(object.into());
+        }
+        Ok(None) => {
+            retval.set_null();
+        }
+        Err(err) => {
+            let error = v8::String::new(scope, &format!("{err:?}")).unwrap();
+            let exception = v8::Exception::syntax_error(scope, error.into());
+            scope.throw_exception(exception);
+            retval.set_undefined();
+        }
+    }
+}
+
+fn query_selector_all(
+    scope: &mut HandleScope<'_>,
+    args: FunctionCallbackArguments<'_>,
+    mut retval: ReturnValue<'_>,
+) {
+    let element = scope.unwrap_object::<Element>(args.this()).unwrap();
+    let node_id = element.id as usize;
+
+    let Some(selector) = args.get(0).to_string(scope) else {
+        return;
+    };
+    let selector = selector.to_rust_string_lossy(scope);
+
+    let document = scope.document();
+
+    match document.query_selector_all_from(node_id, &selector) {
+        Ok(nodes) => {
+            let node_list = NodeList::new(nodes).object(scope);
+            retval.set(node_list.cast());
+        }
+        Err(err) => {
+            let error = v8::String::new(scope, &format!("{err:?}")).unwrap();
+            let exception = v8::Exception::syntax_error(scope, error.into());
+            scope.throw_exception(exception);
+            retval.set_undefined();
+        }
+    }
+}
+
 pub struct Element {
     id: u32,
 }
@@ -76,6 +137,17 @@ impl WrappedObject for Element {
         proto.set(
             add_event_listener_name.cast(),
             add_event_listener_function.cast(),
+        );
+
+        let query_selector_name = fast_str!("querySelector").to_v8(scope);
+        let query_selector_function = FunctionTemplate::new(scope, query_selector);
+        proto.set(query_selector_name.cast(), query_selector_function.cast());
+
+        let query_selector_all_name = fast_str!("querySelectorAll").to_v8(scope);
+        let query_selector_all_function = FunctionTemplate::new(scope, query_selector_all);
+        proto.set(
+            query_selector_all_name.cast(),
+            query_selector_all_function.cast(),
         );
     }
 }
