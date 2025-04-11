@@ -4,11 +4,14 @@ function nodeListIterator(nodeList) {
   return {
     next: function () {
       if (index < nodeList.length) {
-        return { value: nodeList[index++], done: false };
+        return { done: false, value: [index, nodeList[index++]] };
       } else {
         return { done: true };
       }
-    }
+    },
+    [Symbol.iterator]: function () {
+      return this;
+    },
   };
 }
 

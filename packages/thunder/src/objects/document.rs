@@ -1,6 +1,6 @@
 use super::*;
 
-pub fn add_document(scope: &mut HandleScope<'_>, context: &Local<'_, Context>) {
+pub fn add_document(scope: &mut HandleScope<'_>, global: Local<Object>) {
     let document_name = v8::String::new(scope, "document").unwrap();
     let document_value = v8::Object::new(scope);
 
@@ -14,7 +14,6 @@ pub fn add_document(scope: &mut HandleScope<'_>, context: &Local<'_, Context>) {
     add_function_to_object(scope, &document_value, "getElementById", get_element_by_id);
     add_function_to_object(scope, &document_value, "debugTree", debug_tree);
 
-    let global = context.global(scope);
     global
         .set(scope, document_name.into(), document_value.into())
         .unwrap();

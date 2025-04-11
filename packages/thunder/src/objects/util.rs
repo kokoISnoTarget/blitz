@@ -15,6 +15,7 @@ const OBJECT_TEMPLATE_SLOT: u32 = 2;
 const HTML_PARSER_SLOT: u32 = 3;
 const FETCH_THREAD_SLOT: u32 = 4;
 const EVENT_LISTENERS_SLOT: u32 = 5;
+const CONTEXT_SLOT: u32 = 6;
 
 type FunctionTemplatesMap = HashMap<TypeId, Global<FunctionTemplate>, BuildTypeIdHasher>;
 type ObjectTemplatesMap = HashMap<TypeId, Global<ObjectTemplate>, BuildTypeIdHasher>;
@@ -75,6 +76,12 @@ pub trait IsolateExt {
     fn setup_import_map(&mut self);
     fn import_map(&mut self) -> &mut ImportMap;
     fn clear_import_map(&mut self);
+
+    fn setup_context(&mut self);
+    fn context(&self) -> &Global<Context>;
+    fn clear_context(&mut self);
+
+    fn context_scope(&mut self) -> HandleScope;
 }
 impl IsolateExt for Isolate {
     fn document(&self) -> &BaseDocument {
@@ -146,6 +153,27 @@ impl IsolateExt for Isolate {
     fn clear_import_map(&mut self) {
         todo!()
     }
+
+    fn setup_context(&mut self) {
+        let scope = &mut HandleScope::new(self);
+        let context = Context::new(scope, v8::ContextOptions::default());
+        let global_context = Global::new(scope, context);
+        scope.set_inner(CONTEXT_SLOT, global_context);
+    }
+    fn context(&self) -> &Global<Context> {
+        self.get_inner(CONTEXT_SLOT)
+    }
+    fn clear_context(&mut self) {
+        self.clear_inner::<Global<Context>>(CONTEXT_SLOT);
+    }
+    fn context_scope(&mut self) -> HandleScope {
+        let context = {
+            let raw_ptr = self.get_data(CONTEXT_SLOT);
+            assert!(!raw_ptr.is_null(), "Data on slot {CONTEXT_SLOT} is null");
+            unsafe { &*(raw_ptr as *mut Global<Context>) }
+        };
+        HandleScope::with_context(self, context)
+    }
 }
 
 pub trait HandleScopeExt<'a> {
@@ -159,6 +187,8 @@ pub trait HandleScopeExt<'a> {
     fn unwrap_object<T: WrappedObject + 'static>(&mut self, obj: Local<Object>) -> Option<Ptr<T>>
     where
         [(); { T::TAG } as usize]:;
+
+    fn global(&mut self) -> Local<'a, Object>;
 }
 
 impl<'a> HandleScopeExt<'a> for HandleScope<'a> {
@@ -190,6 +220,16 @@ impl<'a> HandleScopeExt<'a> for HandleScope<'a> {
         [(); { T::TAG } as usize]:,
     {
         unsafe { v8::Object::unwrap::<{ T::TAG }, T>(self, obj) }
+    }
+    fn global(&mut self) -> Local<'a, Object> {
+        let context = {
+            let raw_ptr = self.get_data(CONTEXT_SLOT);
+            assert!(!raw_ptr.is_null(), "Data on slot {CONTEXT_SLOT} is null");
+            unsafe { &*(raw_ptr as *mut Global<Context>) }
+        };
+
+        let context = context.open(self);
+        context.global(self)
     }
 }
 

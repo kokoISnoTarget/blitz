@@ -13,7 +13,7 @@ use blitz_dom::BaseDocument;
 use blitz_traits::{Document, DomEvent, Viewport};
 use std::ops::{Deref, DerefMut};
 use v8::{
-    Context, ContextOptions, ContextScope, Function, Global, HandleScope, Local, Object,
+    Context, ContextOptions, ContextScope, Function, Global, HandleScope, Isolate, Local, Object,
     OwnedIsolate, Value,
 };
 
@@ -86,14 +86,9 @@ impl JsDocument {
         isolate.set_document(document);
         isolate.setup_templates();
         isolate.setup_listeners();
+        isolate.setup_context();
 
-        let mut scope = HandleScope::new(&mut isolate);
-        let context = Context::new(&mut scope, ContextOptions::default());
-        Self::initialize(&mut scope, context);
-
-        let context = Global::new(&mut scope, context);
-        scope.set_slot(context);
-        drop(scope);
+        Self::initialize(&mut isolate);
 
         let parser = HtmlParser::new(isolate.as_mut());
         isolate.set_parser(parser);
@@ -106,12 +101,13 @@ impl JsDocument {
     }
 
     // Setup global
-    pub fn initialize(scope: &mut HandleScope<'_, ()>, context: Local<Context>) {
-        let mut scope = ContextScope::new(scope, context);
+    pub fn initialize(isolate: &mut Isolate) {
+        let mut scope = isolate.context_scope();
         scope.init_templates();
-        add_document(&mut scope, &context);
-        add_console(&mut scope, &context);
-        add_window(&mut scope, &context);
+        let global = scope.global();
+        add_document(&mut scope, global);
+        add_console(&mut scope, global);
+        add_window(&mut scope, global);
 
         init_js_files(&mut scope);
     }

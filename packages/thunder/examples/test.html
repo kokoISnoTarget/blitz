@@ -4,14 +4,17 @@
     <title>Test Page</title>
 </head>
 <body>
-    <h1>Hello, World!</h1>
+    <p>The world</p>
+    <p>Says hello</p>
     <script>
-    let node_list = document.querySelectorAll('h1');
+    let node_list = document.querySelectorAll('p');
+    //let node_list_iter = globalThis.__internal_nodeListIterator(node_list);
+    let node_list_iter = node_list.entries();
+    for(const pair of node_list_iter) {
+       const [index, element] = pair;
 
-    let node_list_iter = globalThis.__internal_nodeListIterator(node_list);
-
-    for(const element of node_list_iter) {
-      console.log(element.debug())
+       console.log(`Index: ${index}: ` + element);
+       element.debug();
     }
     </script>
 </body>

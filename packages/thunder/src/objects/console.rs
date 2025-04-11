@@ -1,5 +1,5 @@
 use super::*;
-pub fn add_console(scope: &mut HandleScope<'_>, context: &Local<'_, Context>) {
+pub fn add_console(scope: &mut HandleScope<'_>, global: Local<Object>) {
     let console = Object::new(scope);
 
     for &mode in LOG_LEVELS {
@@ -28,8 +28,6 @@ pub fn add_console(scope: &mut HandleScope<'_>, context: &Local<'_, Context>) {
         .unwrap();
         console.set(scope, name.into(), func.into());
     }
-
-    let global = context.global(scope);
     let name = v8::String::new(scope, "console").unwrap();
     global.set(scope, name.into(), console.into());
 }

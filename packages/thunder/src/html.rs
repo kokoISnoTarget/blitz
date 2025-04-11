@@ -2,7 +2,6 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     collections::HashSet,
-    ops::DerefMut,
     pin::Pin,
     sync::{
         Arc, Mutex,
@@ -17,11 +16,11 @@ use crate::{
 };
 use blitz_dom::{
     ElementNodeData, Node, NodeData, local_name,
-    net::{CssHandler, ImageHandler, Resource},
+    net::{CssHandler, ImageHandler},
     node::Attribute,
     util::ImageType,
 };
-use blitz_traits::net::{Request, SharedProvider};
+use blitz_traits::net::Request;
 use html5ever::{
     ParseOpts, QualName,
     interface::{NodeOrText, QuirksMode},
@@ -32,7 +31,7 @@ use html5ever::{
     interface::{ElementFlags, TreeSink},
     tendril::StrTendril,
 };
-use v8::{Context, Global, HandleScope, Isolate, script_compiler::CompileOptions};
+use v8::{Isolate, script_compiler::CompileOptions};
 
 /// Convert an html5ever Attribute which uses tendril for its value to a blitz Attribute
 /// which uses String.
@@ -141,8 +140,7 @@ impl HtmlSink {
                 todo!();
             }
 
-            let context = self.isolate.remove_slot::<Global<Context>>().unwrap();
-            let mut scope = HandleScope::with_context(self.isolate.deref_mut(), &context);
+            let mut scope = self.isolate.context_scope();
 
             let script = v8::String::new(&mut scope, &script).unwrap();
             let mut source = v8::script_compiler::Source::new(script, None);
@@ -169,7 +167,6 @@ impl HtmlSink {
                 #[cfg(feature = "tracing")]
                 tracing::error!("Running script failed: \n{}", stack_trace);
             }
-            try_catch.set_slot(context);
         }
     }
 

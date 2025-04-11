@@ -11,6 +11,6 @@ fn main() {
         tracing::info!("Tracing initialized");
     }
 
-    //launch_static_html(include_str!("../../../google.html"));
-    launch_url("http://127.0.0.1:7001");
+    launch_url("https://google.com");
+    //launch_url("http://127.0.0.1:7001");
 }

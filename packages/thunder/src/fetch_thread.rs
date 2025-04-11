@@ -137,19 +137,32 @@ impl FetchThreadState {
     }
 
     async fn fetch_request(&self, request: Request) -> Response {
-        let response = self
-            .client
-            .request(request.method, request.url)
-            .headers(request.headers)
-            .header("User-Agent", USER_AGENT)
-            .body(request.body)
-            .send()
-            .await
-            .unwrap();
-        let status = response.status().as_u16();
-        let headers = response.headers().clone();
-        let body = response.bytes().await.unwrap();
-        Response::new_net(status, headers, body)
+        match request.url.scheme() {
+            "data" => {
+                let data_url = data_url::DataUrl::process(request.url.as_str()).unwrap();
+                let decoded = data_url.decode_to_vec().unwrap();
+                Response::new_local(decoded.0.into())
+            }
+            "file" => {
+                let file_content = tokio::fs::read(request.url.path()).await.unwrap();
+                Response::new_local(file_content.into())
+            }
+            _ => {
+                let response = self
+                    .client
+                    .request(request.method, request.url)
+                    .headers(request.headers)
+                    .header("User-Agent", USER_AGENT)
+                    .body(request.body)
+                    .send()
+                    .await
+                    .unwrap();
+                let status = response.status().as_u16();
+                let headers = response.headers().clone();
+                let body = response.bytes().await.unwrap();
+                Response::new_net(status, headers, body)
+            }
+        }
     }
 }
 

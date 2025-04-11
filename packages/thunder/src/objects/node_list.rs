@@ -85,11 +85,10 @@ fn entries(
     args: FunctionCallbackArguments<'_>,
     mut retval: ReturnValue<'_>,
 ) {
-    let context = scope.remove_slot::<Global<Context>>().unwrap();
-    let global = context.open(scope).global(scope);
     let init_fn = fast_str!("__internal_nodeListIterator").to_v8(scope);
     let null = null(scope);
-    let iter = global
+    let iter = scope
+        .global()
         .get(scope, init_fn.cast())
         .unwrap()
         .cast::<Function>()
@@ -112,6 +111,5 @@ fn index<'s>(
     } else {
         ret.set_null();
     };
-
-    Intercepted::No // TODO: wot?
+    Intercepted::Yes
 }
