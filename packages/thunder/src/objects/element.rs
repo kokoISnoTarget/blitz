@@ -20,8 +20,6 @@ pub fn remove(
     args: FunctionCallbackArguments<'_>,
     _retval: ReturnValue<'_>,
 ) {
-    //let obj = args.this();
-    //let node_id = get_node_id(scope, &obj);
     let node_id = args.this().unwrap_as::<Element>(scope).id;
 
     #[cfg(feature = "tracing")]
@@ -35,8 +33,6 @@ fn add_event_listener(
     args: FunctionCallbackArguments<'_>,
     _retval: ReturnValue<'_>,
 ) {
-    //let obj = args.this();
-    //let node_id = get_node_id(scope, &obj);
     let node_id = args.this().unwrap_as::<Element>(scope).id;
 
     #[cfg(feature = "tracing")]

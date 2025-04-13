@@ -126,11 +126,9 @@ impl JsDocument {
         event: &mut DomEvent,
         listener: Global<Value>,
     ) -> bool {
-        let mut handled = false;
         #[cfg(feature = "tracing")]
         tracing::info!("using event listener {:?}", event);
-        let context = self.isolate.remove_slot::<Global<Context>>().unwrap();
-        let mut scope = HandleScope::with_context(&mut self.isolate, &context);
+        let mut scope = self.isolate.context_scope();
 
         let even_object = EventObject::new(event.clone()).object(&mut scope);
         let receiver = Element::new(event.target as u32).object(&mut scope);
@@ -143,7 +141,7 @@ impl JsDocument {
             function
                 .call(&mut scope, receiver.cast(), &[even_object.cast()])
                 .unwrap();
-            handled = true;
+            return true;
         } else if listener.is_object() {
             let object: Local<Object> = listener.cast();
             let func_name = fast_str!("handleEvent").to_v8(&mut scope);
@@ -153,12 +151,10 @@ impl JsDocument {
             {
                 let function: Local<Function> = func.cast();
                 dbg!(function.call(&mut scope, receiver.cast(), &[even_object.cast()]));
-                handled = true;
+                return true;
             }
         }
-
-        scope.set_slot(context);
-        handled
+        false
     }
 }
 impl Deref for JsDocument {

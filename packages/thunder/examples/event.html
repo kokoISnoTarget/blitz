@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Show that event listeners work</title>
+    </head>
+    <body>
+        <button id="myButton">Click me</button>
+        <script>
+            document.getElementById('myButton').addEventListener('click', function() {
+                this.remove()
+            });
+        </script>
+    </body>
+</html>
