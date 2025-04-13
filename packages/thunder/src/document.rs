@@ -1,14 +1,11 @@
 use crate::{
-    HtmlParser, fast_str,
-    fetch_thread::{self, init_fetch_thread},
+    HtmlParser, fast_str, fetch_thread,
     objects::{
-        Element, EventObject, IsolateExt, WrappedObject, add_console, add_document, add_window,
+        Element, EventObject, WrappedObject, add_console, add_document, add_window, init_js_files,
+        init_templates,
     },
-    v8intergration::{GlobalState, IsolateExt},
-};
-use crate::{
-    objects::{HandleScopeExt, init_js_files},
     util::OneByteConstExt,
+    v8intergration::{GlobalState, HandleScopeExt, IsolateExt},
 };
 use blitz_dom::BaseDocument;
 use blitz_shell::BlitzShellEvent;
@@ -27,7 +24,6 @@ use winit::event_loop::EventLoopProxy;
 
 pub struct JsDocument {
     pub(crate) isolate: OwnedIsolate,
-    pub(crate) script_queue: UnboundedReceiver<Box<fetch_thread::Script>>,
 }
 
 impl Document for JsDocument {
@@ -75,7 +71,7 @@ impl Document for JsDocument {
 }
 impl From<JsDocument> for BaseDocument {
     fn from(mut js_doc: JsDocument) -> BaseDocument {
-        js_doc.isolate.clear_document()
+        js_doc.isolate.remove_global_state().unwrap().document
     }
 }
 impl AsRef<BaseDocument> for JsDocument {
@@ -91,10 +87,10 @@ impl AsMut<BaseDocument> for JsDocument {
 
 impl JsDocument {
     fn run_script_queue(&mut self) {
-        let len = self.script_queue.len();
-        let mut buf = Vec::with_capacity(len);
-        self.script_queue.blocking_recv_many(&mut buf, len);
-        for script in buf.drain(..) {}
+        //let len = self.script_queue.len();
+        //let mut buf = Vec::with_capacity(len);
+        //self.script_queue.blocking_recv_many(&mut buf, len);
+        //for script in buf.drain(..) {}
     }
 
     pub fn add_source(&mut self, source: &str) {
@@ -110,17 +106,14 @@ impl JsDocument {
 
         Self::initialize(&mut isolate);
 
-        JsDocument {
-            isolate,
-            script_queue,
-        }
+        JsDocument { isolate }
     }
 
     // Setup global
     pub fn initialize(isolate: &mut Isolate) {
         let mut scope = isolate.context_scope();
-        scope.init_templates();
-        let global = scope.global();
+        init_templates(&mut scope);
+        let global = scope.global_this();
         add_document(&mut scope, global);
         add_console(&mut scope, global);
         add_window(&mut scope, global);
@@ -183,9 +176,8 @@ impl DerefMut for JsDocument {
 
 impl Drop for JsDocument {
     fn drop(&mut self) {
-        let isolate = &mut self.isolate;
-        isolate.clear_document();
-        isolate.clear_templates();
-        isolate.clear_listeners();
+        if let Some(global_state) = self.isolate.remove_global_state() {
+            drop(global_state);
+        }
     }
 }

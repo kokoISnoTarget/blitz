@@ -11,9 +11,8 @@ use crate::{
     fetch_thread::init_fetch_thread,
     importmap::ImportMap,
     module::ModuleMap,
-    objects::{
-        BuildTypeIdHasher, Element, EventObject, FetchThread, IsolatePtr, NodeList, WrappedObject,
-    },
+    objects::{BuildTypeIdHasher, Element, EventObject, FetchThread, NodeList, WrappedObject},
+    util::IsolatePtr,
 };
 
 type FunctionTemplatesMap = HashMap<TypeId, Global<FunctionTemplate>, BuildTypeIdHasher>;
@@ -22,15 +21,15 @@ type ObjectTemplatesMap = HashMap<TypeId, Global<ObjectTemplate>, BuildTypeIdHas
 type EventListeners = HashMap<u32, HashMap<String, Global<Value>>>;
 
 pub struct GlobalState {
-    document: BaseDocument,
-    parser: HtmlParser,
-    fetch_thread: FetchThread,
-    importmap: ImportMap,
-    modulemap: ModuleMap,
-    event_listeners: EventListeners,
-    function_templates: FunctionTemplatesMap,
-    object_templates: ObjectTemplatesMap,
-    context: Global<Context>,
+    pub(crate) document: BaseDocument,
+    pub(crate) parser: HtmlParser,
+    pub(crate) fetch_thread: FetchThread,
+    pub(crate) importmap: ImportMap,
+    pub(crate) modulemap: ModuleMap,
+    pub(crate) event_listeners: EventListeners,
+    pub(crate) function_templates: FunctionTemplatesMap,
+    pub(crate) object_templates: ObjectTemplatesMap,
+    pub(crate) context: Global<Context>,
 }
 impl GlobalState {
     const GLOBAL_STATE_SLOT: u32 = 0;
@@ -38,7 +37,6 @@ impl GlobalState {
         let mut scope = HandleScope::new(isolate);
         let context = Context::new(&mut scope, v8::ContextOptions::default());
         let context = Global::new(&mut scope, context);
-
         let function_templates = HashMap::with_hasher(BuildTypeIdHasher::default());
         let object_templates = HashMap::with_hasher(BuildTypeIdHasher::default());
         let event_listeners = HashMap::new();
@@ -51,8 +49,8 @@ impl GlobalState {
         drop(scope);
 
         GlobalState {
+            parser: HtmlParser::new(isolate, document.id()),
             document,
-            parser: HtmlParser::new(isolate),
             fetch_thread,
             importmap,
             modulemap,
@@ -120,7 +118,7 @@ pub trait IsolateExt<'s> {
     fn global_state_mut(&mut self) -> &mut GlobalState;
     fn global_state_mut_from_ref(&self) -> &mut GlobalState;
     fn set_global_state(&mut self, state: GlobalState);
-    fn drop_global_state(&mut self);
+    fn remove_global_state(&mut self) -> Option<GlobalState>;
 
     fn context_scope(&'s mut self) -> HandleScope<'s>;
     unsafe fn isolate_ptr(&self) -> IsolatePtr;
@@ -164,14 +162,16 @@ impl<'s> IsolateExt<'s> for Isolate {
         self.set_data(GlobalState::GLOBAL_STATE_SLOT, ptr as *mut c_void);
     }
 
-    fn drop_global_state(&mut self) {
+    fn remove_global_state(&mut self) -> Option<GlobalState> {
         let raw_ptr = self.get_data(GlobalState::GLOBAL_STATE_SLOT);
-        assert!(!raw_ptr.is_null(), "Global state is not initialized");
+        if raw_ptr.is_null() {
+            return None;
+        }
         self.set_data(
             GlobalState::GLOBAL_STATE_SLOT,
             std::ptr::null_mut() as *mut c_void,
         );
-        unsafe { Box::from_raw(raw_ptr as *mut GlobalState) };
+        Some(*unsafe { Box::from_raw(raw_ptr as *mut GlobalState) })
     }
 
     fn context_scope(&'s mut self) -> HandleScope<'s> {

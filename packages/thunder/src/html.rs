@@ -1,6 +1,5 @@
 use crate::{
-    fetch_thread::ScriptOptions, importmap::ImportMap, objects::IsolatePtr,
-    v8intergration::IsolateExt,
+    fetch_thread::ScriptOptions, importmap::ImportMap, util::IsolatePtr, v8intergration::IsolateExt,
 };
 use blitz_dom::{
     ElementNodeData, Node, NodeData, local_name,
@@ -50,17 +49,13 @@ pub struct HtmlParser {
 }
 
 impl HtmlParser {
-    pub fn new(isolate: &mut Isolate) -> HtmlParser {
-        let sink = HtmlSink::new(isolate);
+    pub fn new(isolate: &mut Isolate, doc_id: usize) -> HtmlParser {
+        let sink = HtmlSink::new(isolate, doc_id);
 
         let opts = ParseOpts::default();
 
         let tb = TreeBuilder::new(sink, opts.tree_builder);
         let tok = Tokenizer::new(tb, opts.tokenizer);
-
-        let input_buffer = BufferQueue::default();
-        input_buffer.push_back("<div></div>".into());
-        _ = tok.feed(&input_buffer);
 
         HtmlParser {
             tokenizer: tok,
@@ -86,6 +81,7 @@ impl HtmlParser {
         self.tokenizer.sink.sink.finish_steps();
     }
 }
+
 pub struct HtmlSink {
     isolate: IsolatePtr,
     doc_id: usize,
@@ -93,9 +89,7 @@ pub struct HtmlSink {
 }
 
 impl HtmlSink {
-    fn new(isolate: &mut Isolate) -> HtmlSink {
-        let doc_id = isolate.document().id();
-
+    fn new(isolate: &mut Isolate, doc_id: usize) -> HtmlSink {
         HtmlSink {
             isolate: unsafe { isolate.isolate_ptr() },
             doc_id,

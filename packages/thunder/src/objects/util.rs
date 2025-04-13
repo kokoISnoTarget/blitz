@@ -62,27 +62,6 @@ impl BuildHasher for BuildTypeIdHasher {
     }
 }
 
-pub(crate) struct IsolatePtr {
-    isolate: *mut Isolate,
-}
-impl IsolatePtr {
-    pub fn new(isolate: *mut Isolate) -> Self {
-        Self { isolate }
-    }
-}
-impl Deref for IsolatePtr {
-    type Target = Isolate;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { self.isolate.as_ref().unwrap() }
-    }
-}
-impl DerefMut for IsolatePtr {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.isolate.as_mut().unwrap() }
-    }
-}
-
 pub trait WrappedObject: GarbageCollected {
     const TAG: u16;
     fn init_template<'s>(scope: &mut HandleScope<'s>, proto: Local<ObjectTemplate>);

@@ -1,3 +1,5 @@
+use std::ptr::NonNull;
+
 #[macro_export]
 macro_rules! fast_str {
     ($str:expr_2021) => {{
@@ -11,5 +13,28 @@ pub trait OneByteConstExt {
 impl OneByteConstExt for v8::OneByteConst {
     fn to_v8<'a>(&'static self, scope: &mut v8::HandleScope<'a>) -> v8::Local<'a, v8::String> {
         v8::String::new_from_onebyte_const(scope, self).unwrap()
+    }
+}
+
+pub(crate) struct IsolatePtr {
+    isolate: NonNull<v8::Isolate>,
+}
+impl IsolatePtr {
+    pub(crate) fn new(isolate: *mut v8::Isolate) -> Self {
+        Self {
+            isolate: NonNull::new(isolate).unwrap(),
+        }
+    }
+}
+impl std::ops::Deref for IsolatePtr {
+    type Target = v8::Isolate;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.isolate.as_ref() }
+    }
+}
+impl std::ops::DerefMut for IsolatePtr {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.isolate.as_mut() }
     }
 }

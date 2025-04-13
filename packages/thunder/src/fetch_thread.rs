@@ -15,10 +15,6 @@ use tokio::{
     task::spawn_local,
 };
 use url::Url;
-use v8::{
-    Context, Global, HandleScope, Isolate, IsolateHandle, Value,
-    script_compiler::{self, CompileOptions, NoCacheReason, Source},
-};
 
 use crate::html::ShouldParse;
 
@@ -61,7 +57,7 @@ pub(crate) async fn fetch_thread_main(ret: OneshotSender<(UnboundedSender<ToFetc
     state.receive().await;
 }
 
-enum ToFetch {
+pub enum ToFetch {
     FetchForProvider(
         Box<(
             usize,
@@ -195,9 +191,9 @@ pub struct Script {
     data: Bytes,
 }
 
-struct ProviderImpl(UnboundedSender<ToFetch>);
+pub(crate) struct ProviderImpl(UnboundedSender<ToFetch>);
 impl ProviderImpl {
-    pub fn new(fetch_thread_sender: UnboundedSender<ToFetch>) -> Self {
+    fn new(fetch_thread_sender: UnboundedSender<ToFetch>) -> Self {
         ProviderImpl(fetch_thread_sender)
     }
 }
