@@ -1,10 +1,10 @@
-use std::{ffi::c_void, sync::Arc};
-
 use blitz_dom::net::Resource;
 use blitz_traits::net::{
     Bytes, DummyNetCallback, NetHandler, NetProvider, Request, SharedCallback,
 };
 use reqwest::header::HeaderMap;
+use std::task::Waker;
+use std::{ffi::c_void, ops::Deref, sync::Arc};
 use tokio::{
     runtime::Handle,
     spawn,
@@ -20,33 +20,26 @@ use v8::{
     script_compiler::{self, CompileOptions, NoCacheReason, Source},
 };
 
-use crate::{html::ShouldParse, objects::IsolateExt};
+use crate::html::ShouldParse;
 
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:60.0) Gecko/20100101 Firefox/81.0";
 
-pub async fn init_fetch_thread(isolate: &mut Isolate) {
-    let handle = isolate.thread_safe_handle();
+pub fn init_fetch_thread() -> (FetchThread, ProviderImpl) {
     let (send, recv) = oneshot_channel();
 
-    //std::thread::spawn(|| fetch_thread_main(send, handle));
-    spawn(async { fetch_thread_main(send, handle).await });
+    std::thread::spawn(|| fetch_thread_main(send));
 
-    let (fetch_thread_sender, should_parse) = recv.await.unwrap();
+    let (fetch_thread_sender, should_parse) = recv.blocking_recv().unwrap();
     let fetch_thread = FetchThread::new(fetch_thread_sender.clone());
-    isolate.set_fetch_thread(fetch_thread);
     let provider_impl = ProviderImpl::new(fetch_thread_sender);
-    isolate
-        .document_mut()
-        .set_net_provider(Arc::new(provider_impl));
-    isolate.parser().should_parse = should_parse;
+
     #[cfg(feature = "tracing")]
     tracing::info!("Fetch thread initialized");
+    (fetch_thread, provider_impl)
 }
 
-async fn fetch_thread_main(
-    ret: OneshotSender<(UnboundedSender<ToFetch>, ShouldParse)>,
-    isolate_handle: IsolateHandle,
-) {
+#[tokio::main(flavor = "current_thread")]
+pub(crate) async fn fetch_thread_main(ret: OneshotSender<(UnboundedSender<ToFetch>, ShouldParse)>) {
     let (sender, message_recv) = unbounded_channel();
     let message_sender = sender.clone();
 
@@ -60,9 +53,7 @@ async fn fetch_thread_main(
         message_sender,
         message_recv,
         tokio_handle: Handle::current(),
-        isolate_handle,
-        should_parse,
-
+        waker: None,
         client,
         net_provider_callback: Arc::new(DummyNetCallback::default()),
     };
@@ -80,6 +71,8 @@ enum ToFetch {
     ),
     SetCallbackForProvider(SharedCallback<Resource>),
 
+    SetPollWaker(Waker),
+
     FetchScript(Box<ScriptOptions>),
 
     Quit,
@@ -89,9 +82,8 @@ struct FetchThreadState {
     message_sender: UnboundedSender<ToFetch>,
     message_recv: UnboundedReceiver<ToFetch>,
     tokio_handle: Handle,
-    isolate_handle: IsolateHandle,
 
-    should_parse: ShouldParse,
+    waker: Option<Waker>,
 
     client: reqwest::Client,
 
@@ -110,29 +102,31 @@ impl FetchThreadState {
                 ToFetch::SetCallbackForProvider(callback) => {
                     self.net_provider_callback = callback;
                 }
-                ToFetch::FetchScript(_options) => {}
+                ToFetch::FetchScript(options) => {
+                    if options.is_defer || options.is_async || options.is_module {
+                        todo!();
+                    };
+                    let response = self.fetch_request(Request::get(options.url.clone())).await;
+
+                    let data = Box::new(Script {
+                        options: *options,
+                        data: response.into_bytes(),
+                    });
+
+                    //self.script_queue_sender.send(data).unwrap();
+
+                    if let Some(ref waker) = self.waker {
+                        waker.wake_by_ref()
+                    }
+                }
+                ToFetch::SetPollWaker(waker) => {
+                    self.waker = Some(waker);
+                }
                 ToFetch::Quit => {
                     self.message_recv.close();
                     break;
                 }
             }
-        }
-    }
-    async fn run_js(&self) {
-        let data = Box::new(CallbackData {
-            is_module: false,
-            url: Url::parse("localhost").unwrap(),
-        });
-        let data_ptr = Box::into_raw(data) as *mut c_void;
-        if !self.isolate_handle.request_interrupt(callback, data_ptr) {
-            self.message_sender.send(ToFetch::Quit).unwrap();
-        }
-        self.should_parse
-            .0
-            .state
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        if let Some(waker) = self.should_parse.0.waker.lock().unwrap().as_ref() {
-            waker.wake_by_ref();
         }
     }
 
@@ -166,42 +160,39 @@ impl FetchThreadState {
     }
 }
 
-unsafe extern "C" fn callback(isolate: &mut Isolate, data: *mut c_void) {
-    let callback_data = unsafe { *Box::from_raw(data as *mut CallbackData) };
-    callback_inner(isolate, callback_data);
-}
-fn callback_inner(isolate: &mut Isolate, callback_data: CallbackData) {
-    let context = isolate.remove_slot::<Global<Context>>().unwrap();
-    let scope = &mut HandleScope::with_context(isolate, &context);
+// fn callback_inner(isolate: &mut Isolate, callback_data: CallbackData) {
+//     let mut scope = isolate.context_scope();
 
-    let source_string = v8::String::new(scope, "value").unwrap();
-    //let origin = v8::ScriptOrigin::new(scope, resource_name, resource_line_offset, resource_column_offset, resource_is_shared_cross_origin, script_id, source_map_url, resource_is_opaque, is_wasm, is_module, host_defined_options)
-    let source = &mut Source::new(source_string, None);
-    if callback_data.is_module {
-        let module = script_compiler::compile_module2(
-            scope,
-            source,
-            CompileOptions::NoCompileOptions,
-            NoCacheReason::NoReason,
-        )
-        .unwrap()
-        .evaluate(scope);
-        //.instantiate_module2(scope, callback, source_callback)
-    } else {
-        let script = script_compiler::compile(
-            scope,
-            source,
-            CompileOptions::NoCompileOptions,
-            NoCacheReason::NoReason,
-        )
-        .unwrap();
-    }
+//     let source_string =
+//         v8::String::new_from_utf8(&mut scope, &callback_data.data, v8::NewStringType::Normal)
+//             .unwrap();
+//     //let origin = v8::ScriptOrigin::new(scope, resource_name, resource_line_offset, resource_column_offset, resource_is_shared_cross_origin, script_id, source_map_url, resource_is_opaque, is_wasm, is_module, host_defined_options)
+//     let source = &mut Source::new(source_string, None);
+//     if callback_data.is_module {
+//         let module = script_compiler::compile_module2(
+//             &mut scope,
+//             source,
+//             CompileOptions::NoCompileOptions,
+//             NoCacheReason::NoReason,
+//         )
+//         .unwrap()
+//         .evaluate(&mut scope);
+//         //.instantiate_module2(scope, callback, source_callback)
+//     } else {
+//         script_compiler::compile(
+//             &mut scope,
+//             source,
+//             CompileOptions::NoCompileOptions,
+//             NoCacheReason::NoReason,
+//         )
+//         .unwrap()
+//         .run(&mut scope);
+//     }
+//}
 
-    scope.set_slot(context);
-}
-struct CallbackData {
-    is_module: bool,
-    url: Url,
+pub struct Script {
+    options: ScriptOptions,
+    data: Bytes,
 }
 
 struct ProviderImpl(UnboundedSender<ToFetch>);
@@ -247,6 +238,12 @@ impl FetchThread {
         self.0
             .send(ToFetch::SetCallbackForProvider(callback))
             .unwrap();
+    }
+    pub fn set_waker(&self, waker: Waker) {
+        #[cfg(feature = "tracing")]
+        tracing::info!("FetchThread::set_waker");
+
+        self.0.send(ToFetch::SetPollWaker(waker)).unwrap();
     }
 }
 

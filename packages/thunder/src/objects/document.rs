@@ -1,3 +1,5 @@
+use crate::v8intergration::IsolateExt;
+
 use super::*;
 
 pub fn add_document(scope: &mut HandleScope<'_>, global: Local<Object>) {

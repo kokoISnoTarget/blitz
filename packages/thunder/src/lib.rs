@@ -2,11 +2,15 @@
 #![feature(let_chains)]
 #![feature(string_from_utf8_lossy_owned)]
 
+mod application;
 mod document;
 mod fetch_thread;
 mod html;
+mod importmap;
+mod module;
 mod objects;
 mod util;
+mod v8intergration;
 
 use blitz_renderer_vello::BlitzVelloRenderer;
 use blitz_shell::{
@@ -14,7 +18,7 @@ use blitz_shell::{
     create_default_event_loop,
 };
 use blitz_traits::net::Request;
-use objects::IsolateExt;
+use v8intergration::IsolateExt;
 use winit::window::WindowAttributes;
 
 pub use self::document::JsDocument;
@@ -33,7 +37,7 @@ pub fn launch_static_html(source: &str) {
 
     let heap = v8::cppgc::Heap::create(platform, v8::cppgc::HeapCreateParams::default());
     let isolate = v8::Isolate::new(v8::CreateParams::default().cpp_heap(heap));
-
+    dbg!(isolate.get_number_of_data_slots());
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -42,7 +46,7 @@ pub fn launch_static_html(source: &str) {
 
     let mut doc = JsDocument::new(isolate);
 
-    runtime.block_on(doc.parse(source));
+    doc.add_source(source);
 
     let window_attributes = WindowAttributes::default();
 
@@ -93,14 +97,15 @@ pub fn launch_url(url: &str) {
 
     doc.as_mut().set_base_url(url);
 
-    runtime.block_on(async {
+    let str = runtime.block_on(async {
         let response = recv.await.unwrap();
 
         let string = String::from_utf8(response.to_vec());
 
         let str = string.unwrap_or_else(|err| err.into_utf8_lossy());
-        doc.parse(&str).await;
+        str
     });
+    doc.add_source(&str);
 
     let window_attributes = WindowAttributes::default();
 

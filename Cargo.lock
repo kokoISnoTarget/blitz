@@ -5502,6 +5502,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "strum"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f64def088c51c9510a8579e3c5d67c65349dcf755e5479ad3d010aa6454e2c32"
+
+[[package]]
 name = "stylo"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5897,7 +5903,10 @@ dependencies = [
  "data-url",
  "html5ever",
  "reqwest",
+ "serde",
+ "serde_json",
  "smallvec",
+ "strum",
  "tokio",
  "tracing",
  "tracing-subscriber",

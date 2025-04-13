@@ -1,3 +1,5 @@
+use crate::v8intergration::IsolateExt;
+
 use super::*;
 
 pub fn debug(
@@ -5,7 +7,7 @@ pub fn debug(
     args: FunctionCallbackArguments<'_>,
     mut retval: ReturnValue<'_>,
 ) {
-    let node_id = scope.unwrap_object::<Element>(args.this()).unwrap().id;
+    let node_id = args.this().unwrap_as::<Element>(scope).id;
 
     #[cfg(feature = "tracing")]
     tracing::info!("Element ID: {}", node_id);
@@ -20,7 +22,7 @@ pub fn remove(
 ) {
     //let obj = args.this();
     //let node_id = get_node_id(scope, &obj);
-    let node_id = scope.unwrap_object::<Element>(args.this()).unwrap().id;
+    let node_id = args.this().unwrap_as::<Element>(scope).id;
 
     #[cfg(feature = "tracing")]
     tracing::info!("Removing element with ID: {}", node_id);
@@ -35,7 +37,7 @@ fn add_event_listener(
 ) {
     //let obj = args.this();
     //let node_id = get_node_id(scope, &obj);
-    let node_id = scope.unwrap_object::<Element>(args.this()).unwrap().id;
+    let node_id = args.this().unwrap_as::<Element>(scope).id;
 
     #[cfg(feature = "tracing")]
     tracing::warn!(
@@ -61,8 +63,7 @@ fn query_selector(
     args: FunctionCallbackArguments<'_>,
     mut retval: ReturnValue<'_>,
 ) {
-    let element = scope.unwrap_object::<Element>(args.this()).unwrap();
-    let node_id = element.id as usize;
+    let node_id = args.this().unwrap_as::<Element>(scope).id as usize;
 
     let Some(selector) = args.get(0).to_string(scope) else {
         return;
@@ -93,8 +94,7 @@ fn query_selector_all(
     args: FunctionCallbackArguments<'_>,
     mut retval: ReturnValue<'_>,
 ) {
-    let element = scope.unwrap_object::<Element>(args.this()).unwrap();
-    let node_id = element.id as usize;
+    let node_id = args.this().unwrap_as::<Element>(scope).id as usize;
 
     let Some(selector) = args.get(0).to_string(scope) else {
         return;

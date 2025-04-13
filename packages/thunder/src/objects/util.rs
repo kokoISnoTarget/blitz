@@ -1,237 +1,11 @@
 use std::{
-    any::TypeId,
-    collections::HashMap,
-    ffi::c_void,
     hash::BuildHasher,
     ops::{Deref, DerefMut},
-    ptr::NonNull,
 };
 
+use crate::v8intergration::IsolateExt;
+
 use super::*;
-
-const FUNCTION_TEMPLATE_SLOT: u32 = 0;
-const DOCUMENT_SLOT: u32 = 1;
-const OBJECT_TEMPLATE_SLOT: u32 = 2;
-const HTML_PARSER_SLOT: u32 = 3;
-const FETCH_THREAD_SLOT: u32 = 4;
-const EVENT_LISTENERS_SLOT: u32 = 5;
-const CONTEXT_SLOT: u32 = 6;
-
-type FunctionTemplatesMap = HashMap<TypeId, Global<FunctionTemplate>, BuildTypeIdHasher>;
-type ObjectTemplatesMap = HashMap<TypeId, Global<ObjectTemplate>, BuildTypeIdHasher>;
-
-type EventListeners = HashMap<u32, HashMap<String, Global<Value>>>;
-
-trait _IsolateExt {
-    fn get_inner<T>(&self, slot: u32) -> &T;
-    fn get_inner_mut<T>(&mut self, slot: u32) -> &mut T;
-    fn set_inner<T>(&mut self, slot: u32, data: T);
-    fn clear_inner<T>(&mut self, slot: u32) -> T;
-}
-impl _IsolateExt for Isolate {
-    fn get_inner<T>(&self, slot: u32) -> &T {
-        let raw_ptr = self.get_data(slot);
-        assert!(!raw_ptr.is_null(), "Data on slot {slot} is null");
-        unsafe { &*(raw_ptr as *const T) }
-    }
-    fn get_inner_mut<T>(&mut self, slot: u32) -> &mut T {
-        let raw_ptr = self.get_data(slot);
-        assert!(!raw_ptr.is_null(), "Data on slot {slot} is null");
-        unsafe { &mut *(raw_ptr as *mut T) }
-    }
-    fn set_inner<T>(&mut self, slot: u32, data: T) {
-        let ptr = Box::into_raw(Box::new(data));
-        self.set_data(slot, ptr as *mut c_void);
-    }
-    fn clear_inner<T>(&mut self, slot: u32) -> T {
-        let raw_ptr = self.get_data(slot);
-        assert!(!raw_ptr.is_null());
-        self.set_data(slot, std::ptr::null_mut() as *mut c_void);
-        *unsafe { Box::from_raw(raw_ptr as *mut T) }
-    }
-}
-pub trait IsolateExt {
-    fn document(&self) -> &BaseDocument;
-    fn document_mut(&mut self) -> &mut BaseDocument;
-    fn document_mut_from_ref(&self) -> &mut BaseDocument;
-    fn set_document(&mut self, document: BaseDocument);
-    fn clear_document(&mut self) -> BaseDocument;
-
-    fn ptr(&self) -> IsolatePtr;
-
-    fn parser(&mut self) -> &mut HtmlParser;
-    fn set_parser(&mut self, parser: HtmlParser);
-
-    fn fetch_thread(&self) -> &FetchThread;
-    fn set_fetch_thread(&mut self, fetch_thread: FetchThread);
-
-    fn setup_templates(&mut self);
-    fn clear_templates(&mut self);
-
-    fn event_listeners(&self) -> &EventListeners;
-    fn event_listeners_mut(&mut self) -> &mut EventListeners;
-    fn setup_listeners(&mut self);
-    fn clear_listeners(&mut self);
-
-    fn setup_import_map(&mut self);
-    fn import_map(&mut self) -> &mut ImportMap;
-    fn clear_import_map(&mut self);
-
-    fn setup_context(&mut self);
-    fn context(&self) -> &Global<Context>;
-    fn clear_context(&mut self);
-
-    fn context_scope(&mut self) -> HandleScope;
-}
-impl IsolateExt for Isolate {
-    fn document(&self) -> &BaseDocument {
-        self.get_inner(DOCUMENT_SLOT)
-    }
-    fn document_mut(&mut self) -> &mut BaseDocument {
-        self.get_inner_mut(DOCUMENT_SLOT)
-    }
-    fn document_mut_from_ref(&self) -> &mut BaseDocument {
-        let raw_ptr = self.get_data(DOCUMENT_SLOT);
-        assert!(!raw_ptr.is_null());
-        unsafe { &mut *(raw_ptr as *mut _) }
-    }
-    fn set_document(&mut self, document: BaseDocument) {
-        self.set_inner(DOCUMENT_SLOT, document);
-    }
-    fn clear_document(&mut self) -> BaseDocument {
-        self.clear_inner(DOCUMENT_SLOT)
-    }
-
-    fn setup_templates(&mut self) {
-        let templates = FunctionTemplatesMap::with_hasher(Default::default());
-        self.set_inner(FUNCTION_TEMPLATE_SLOT, templates);
-        let templates = ObjectTemplatesMap::with_hasher(Default::default());
-        self.set_inner(OBJECT_TEMPLATE_SLOT, templates);
-    }
-    fn clear_templates(&mut self) {
-        let mut templates = self.clear_inner::<FunctionTemplatesMap>(FUNCTION_TEMPLATE_SLOT);
-        templates.clear();
-        let mut templates = self.clear_inner::<ObjectTemplatesMap>(OBJECT_TEMPLATE_SLOT);
-        templates.clear();
-    }
-
-    fn ptr(&self) -> IsolatePtr {
-        IsolatePtr::new(self as *const Isolate as *mut Isolate)
-    }
-
-    fn parser(&mut self) -> &mut HtmlParser {
-        self.get_inner_mut(HTML_PARSER_SLOT)
-    }
-    fn set_parser(&mut self, parser: HtmlParser) {
-        self.set_inner(HTML_PARSER_SLOT, parser);
-    }
-    fn fetch_thread(&self) -> &FetchThread {
-        self.get_inner(FETCH_THREAD_SLOT)
-    }
-    fn set_fetch_thread(&mut self, thread: FetchThread) {
-        self.set_inner(FETCH_THREAD_SLOT, thread);
-    }
-
-    fn event_listeners(&self) -> &EventListeners {
-        self.get_inner(EVENT_LISTENERS_SLOT)
-    }
-    fn event_listeners_mut(&mut self) -> &mut EventListeners {
-        self.get_inner_mut(EVENT_LISTENERS_SLOT)
-    }
-    fn setup_listeners(&mut self) {
-        self.set_inner(EVENT_LISTENERS_SLOT, EventListeners::default());
-    }
-    fn clear_listeners(&mut self) {
-        self.clear_inner::<EventListeners>(EVENT_LISTENERS_SLOT);
-    }
-    fn setup_import_map(&mut self) {
-        todo!()
-    }
-    fn import_map(&mut self) -> &mut ImportMap {
-        todo!()
-    }
-    fn clear_import_map(&mut self) {
-        todo!()
-    }
-
-    fn setup_context(&mut self) {
-        let scope = &mut HandleScope::new(self);
-        let context = Context::new(scope, v8::ContextOptions::default());
-        let global_context = Global::new(scope, context);
-        scope.set_inner(CONTEXT_SLOT, global_context);
-    }
-    fn context(&self) -> &Global<Context> {
-        self.get_inner(CONTEXT_SLOT)
-    }
-    fn clear_context(&mut self) {
-        self.clear_inner::<Global<Context>>(CONTEXT_SLOT);
-    }
-    fn context_scope(&mut self) -> HandleScope {
-        let context = {
-            let raw_ptr = self.get_data(CONTEXT_SLOT);
-            assert!(!raw_ptr.is_null(), "Data on slot {CONTEXT_SLOT} is null");
-            unsafe { &*(raw_ptr as *mut Global<Context>) }
-        };
-        HandleScope::with_context(self, context)
-    }
-}
-
-pub trait HandleScopeExt<'a> {
-    fn get_fn_template<T: 'static>(&mut self) -> Option<Global<FunctionTemplate>>;
-    fn set_fn_template<T: 'static>(
-        &mut self,
-        template: impl Handle<Data = FunctionTemplate>,
-    ) -> Option<Global<FunctionTemplate>>;
-    fn init_templates(&mut self);
-
-    fn unwrap_object<T: WrappedObject + 'static>(&mut self, obj: Local<Object>) -> Option<Ptr<T>>
-    where
-        [(); { T::TAG } as usize]:;
-
-    fn global(&mut self) -> Local<'a, Object>;
-}
-
-impl<'a> HandleScopeExt<'a> for HandleScope<'a> {
-    fn get_fn_template<T: 'static>(&mut self) -> Option<Global<FunctionTemplate>> {
-        let templates = self.get_inner::<FunctionTemplatesMap>(FUNCTION_TEMPLATE_SLOT);
-        let type_id = TypeId::of::<T>();
-        templates.get(&type_id).cloned()
-    }
-    fn set_fn_template<T: 'static>(
-        &mut self,
-        template: impl Handle<Data = FunctionTemplate>,
-    ) -> Option<Global<FunctionTemplate>> {
-        let global = Global::new(self, template);
-        let type_id = TypeId::of::<T>();
-
-        let templates = self.get_inner_mut::<FunctionTemplatesMap>(FUNCTION_TEMPLATE_SLOT);
-        templates.insert(type_id, global)
-    }
-    fn init_templates(&mut self) {
-        //super::element::set_element_template(self);
-        //super::event::set_event_template(self);
-        //super::node_list::set_node_list_template(self);
-        Element::init(self);
-        EventObject::init(self);
-        NodeList::init(self);
-    }
-    fn unwrap_object<T: WrappedObject>(&mut self, obj: Local<Object>) -> Option<Ptr<T>>
-    where
-        [(); { T::TAG } as usize]:,
-    {
-        unsafe { v8::Object::unwrap::<{ T::TAG }, T>(self, obj) }
-    }
-    fn global(&mut self) -> Local<'a, Object> {
-        let context = {
-            let raw_ptr = self.get_data(CONTEXT_SLOT);
-            assert!(!raw_ptr.is_null(), "Data on slot {CONTEXT_SLOT} is null");
-            unsafe { &*(raw_ptr as *mut Global<Context>) }
-        };
-
-        let context = context.open(self);
-        context.global(self)
-    }
-}
 
 pub fn add_function_to_object(
     scope: &mut HandleScope<'_>,
@@ -309,10 +83,6 @@ impl DerefMut for IsolatePtr {
     }
 }
 
-pub struct ImportMap {
-    map: HashMap<String, String>,
-}
-
 pub trait WrappedObject: GarbageCollected {
     const TAG: u16;
     fn init_template<'s>(scope: &mut HandleScope<'s>, proto: Local<ObjectTemplate>);
@@ -356,5 +126,26 @@ pub trait WrappedObject: GarbageCollected {
             v8::Object::wrap::<{ Self::TAG }, Self>(scope, obj, &member);
         }
         obj
+    }
+}
+
+pub trait ObjectExt {
+    fn get_as<T: WrappedObject>(self, scope: &mut Isolate) -> Option<Ptr<T>>
+    where
+        [(); { T::TAG } as usize]:;
+    fn unwrap_as<T: WrappedObject>(self, scope: &mut Isolate) -> Ptr<T>
+    where
+        [(); { T::TAG } as usize]:,
+        Self: Sized,
+    {
+        self.get_as(scope).unwrap()
+    }
+}
+impl<'s> ObjectExt for Local<'s, Object> {
+    fn get_as<T: WrappedObject>(self, isolate: &mut Isolate) -> Option<Ptr<T>>
+    where
+        [(); { T::TAG } as usize]:,
+    {
+        unsafe { v8::Object::unwrap::<{ T::TAG }, T>(isolate, self) }
     }
 }

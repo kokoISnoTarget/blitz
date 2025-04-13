@@ -1,5 +1,7 @@
 use smallvec::SmallVec;
 
+use crate::v8intergration::HandleScopeExt;
+
 use super::*;
 
 pub struct NodeList {
@@ -51,7 +53,7 @@ fn length_getter(
     args: FunctionCallbackArguments<'_>,
     mut retval: ReturnValue<'_>,
 ) {
-    let obj = scope.unwrap_object::<NodeList>(args.this()).unwrap();
+    let obj = args.this().unwrap_as::<NodeList>(scope);
     retval.set_uint32(obj.length());
 }
 
@@ -60,7 +62,7 @@ fn item(
     args: FunctionCallbackArguments<'_>,
     mut retval: ReturnValue<'_>,
 ) {
-    let obj = scope.unwrap_object::<NodeList>(args.this()).unwrap();
+    let obj = args.this().unwrap_as::<NodeList>(scope);
     let Ok(index) = args.get(0).try_cast::<Number>() else {
         let msg = fast_str!("No index provided").to_v8(scope);
         let exception = Exception::type_error(scope, msg);
@@ -88,7 +90,7 @@ fn entries(
     let init_fn = fast_str!("__internal_nodeListIterator").to_v8(scope);
     let null = null(scope);
     let iter = scope
-        .global()
+        .global_this()
         .get(scope, init_fn.cast())
         .unwrap()
         .cast::<Function>()
@@ -103,7 +105,7 @@ fn index<'s>(
     args: PropertyCallbackArguments<'s>,
     mut ret: ReturnValue<'_>,
 ) -> Intercepted {
-    let node_list = scope.unwrap_object::<NodeList>(args.this()).unwrap();
+    let node_list = args.this().unwrap_as::<NodeList>(scope);
     let element_id = node_list.array.get(index as usize);
 
     if let Some(&element_id) = element_id {

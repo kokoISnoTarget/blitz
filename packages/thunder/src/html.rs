@@ -1,18 +1,6 @@
-use std::{
-    borrow::Cow,
-    cell::RefCell,
-    collections::HashSet,
-    pin::Pin,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-    task::Waker,
-};
-
 use crate::{
-    fetch_thread::ScriptOptions,
-    objects::{IsolateExt, IsolatePtr},
+    fetch_thread::ScriptOptions, importmap::ImportMap, objects::IsolatePtr,
+    v8intergration::IsolateExt,
 };
 use blitz_dom::{
     ElementNodeData, Node, NodeData, local_name,
@@ -31,6 +19,18 @@ use html5ever::{
     interface::{ElementFlags, TreeSink},
     tendril::StrTendril,
 };
+use std::{
+    borrow::Cow,
+    cell::RefCell,
+    collections::HashSet,
+    pin::Pin,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    task::Waker,
+};
+use std::{collections::HashMap, task::Context};
 use v8::{Isolate, script_compiler::CompileOptions};
 
 /// Convert an html5ever Attribute which uses tendril for its value to a blitz Attribute
@@ -58,6 +58,10 @@ impl HtmlParser {
         let tb = TreeBuilder::new(sink, opts.tree_builder);
         let tok = Tokenizer::new(tb, opts.tokenizer);
 
+        let input_buffer = BufferQueue::default();
+        input_buffer.push_back("<div></div>".into());
+        _ = tok.feed(&input_buffer);
+
         HtmlParser {
             tokenizer: tok,
             input_buffer: BufferQueue::default(),
@@ -65,24 +69,21 @@ impl HtmlParser {
             finished: false,
         }
     }
-
-    pub async fn finish_async(&mut self) {
-        self.drive_parser().await;
-        assert!(self.input_buffer.is_empty());
-        self.tokenizer.end();
-        self.tokenizer.sink.sink.finish_async().await;
-    }
-    pub async fn drive_parser(&mut self) {
-        loop {
-            // Wait for running scripts and some resources to be fetched
-            self.should_parse.iref().await;
-            let result = self.tokenizer.feed(&self.input_buffer);
-            if let TokenizerResult::Script(script_node_id) = result {
-                self.tokenizer.sink.sink.add_script(script_node_id);
-            } else {
+    pub fn feed(&mut self, cx: std::task::Context) {
+        while let TokenizerResult::Script(node_id) = self.tokenizer.feed(&self.input_buffer) {
+            if !self.tokenizer.sink.sink.add_script(node_id, &cx) {
                 break;
             }
         }
+    }
+    pub fn try_finish(&mut self) {
+        if !self.input_buffer.is_empty() {
+            return;
+        }
+
+        self.tokenizer.end();
+        self.finished = true;
+        self.tokenizer.sink.sink.finish_steps();
     }
 }
 pub struct HtmlSink {
@@ -96,20 +97,33 @@ impl HtmlSink {
         let doc_id = isolate.document().id();
 
         HtmlSink {
-            isolate: isolate.ptr(),
+            isolate: unsafe { isolate.isolate_ptr() },
             doc_id,
             style_nodes: RefCell::new(Vec::new()),
         }
     }
-    async fn finish_async(&mut self) {
+    fn finish_steps(&mut self) {
         let doc = self.isolate.document_mut();
         for id in self.style_nodes.borrow().iter() {
             doc.process_style_element(*id);
         }
     }
-    fn add_script(&mut self, node_id: usize) {
+    fn add_script(&mut self, node_id: usize, cx: &Context) -> bool {
         let script_node = self.node(node_id);
         let attrs = script_node.attrs().unwrap();
+
+        let is_importmap = attrs
+            .iter()
+            .any(|attr| matches!(attr.name.local, local_name!("type") if attr.value.to_lowercase() == "importmap"));
+        if is_importmap {
+            let content = script_node.text_content();
+            let mut importmap = serde_json::from_str::<ImportMap>(&content).unwrap();
+            let doc = self.isolate.document();
+            importmap.resolve_new(|str| doc.resolve_url(str).into()); // FIXME: Probably wrong
+
+            self.isolate.importmap().merge(importmap);
+            return true;
+        }
 
         let is_async = attrs
             .iter()
@@ -134,6 +148,7 @@ impl HtmlSink {
                 is_defer,
                 is_async,
             });
+            false
         } else {
             let script = script_node.text_content();
             if is_defer {
@@ -166,7 +181,8 @@ impl HtmlSink {
                     );
                 #[cfg(feature = "tracing")]
                 tracing::error!("Running script failed: \n{}", stack_trace);
-            }
+            };
+            true
         }
     }
 
@@ -285,11 +301,6 @@ impl TreeSink for HtmlSink {
         for id in self.style_nodes.borrow().iter() {
             doc.process_style_element(*id);
         }
-        // TODO: Implement style processing
-
-        // for error in self.errors.borrow().iter() {
-        //     println!("ERROR: {}", error);
-        // }
     }
 
     fn parse_error(&self, msg: Cow<'static, str>) {

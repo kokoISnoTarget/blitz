@@ -58,3 +58,9 @@ pub fn init_js_files(scope: &mut HandleScope) {
     .unwrap()
     .run(scope);
 }
+
+pub fn init_templates(scope: &mut HandleScope) {
+    Element::init(scope);
+    EventObject::init(scope);
+    NodeList::init(scope);
+}

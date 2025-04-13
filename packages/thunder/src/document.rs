@@ -1,24 +1,33 @@
 use crate::{
     HtmlParser, fast_str,
-    fetch_thread::init_fetch_thread,
+    fetch_thread::{self, init_fetch_thread},
     objects::{
         Element, EventObject, IsolateExt, WrappedObject, add_console, add_document, add_window,
     },
+    v8intergration::{GlobalState, IsolateExt},
 };
 use crate::{
     objects::{HandleScopeExt, init_js_files},
     util::OneByteConstExt,
 };
 use blitz_dom::BaseDocument;
+use blitz_shell::BlitzShellEvent;
 use blitz_traits::{Document, DomEvent, Viewport};
-use std::ops::{Deref, DerefMut};
+use std::{
+    ops::{Deref, DerefMut},
+    sync::{Arc, Mutex},
+};
+use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+use url::Url;
 use v8::{
     Context, ContextOptions, ContextScope, Function, Global, HandleScope, Isolate, Local, Object,
     OwnedIsolate, Value,
 };
+use winit::event_loop::EventLoopProxy;
 
 pub struct JsDocument {
     pub(crate) isolate: OwnedIsolate,
+    pub(crate) script_queue: UnboundedReceiver<Box<fetch_thread::Script>>,
 }
 
 impl Document for JsDocument {
@@ -51,9 +60,17 @@ impl Document for JsDocument {
         self.as_ref().id()
     }
 
-    fn poll(&mut self, _cx: std::task::Context) -> bool {
-        // Default implementation does nothing
-        false
+    fn poll(&mut self, cx: std::task::Context) -> bool {
+        self.run_script_queue();
+
+        self.isolate.fetch_thread().set_waker(cx.waker().clone()); // TODO: Make this less disgusting
+        let parser = self.isolate.parser();
+        if parser.finished {
+            return false;
+        }
+        parser.feed(cx);
+        parser.try_finish();
+        true
     }
 }
 impl From<JsDocument> for BaseDocument {
@@ -73,31 +90,30 @@ impl AsMut<BaseDocument> for JsDocument {
 }
 
 impl JsDocument {
-    pub async fn parse(&mut self, source: &str) {
-        let parser = self.isolate.parser();
+    fn run_script_queue(&mut self) {
+        let len = self.script_queue.len();
+        let mut buf = Vec::with_capacity(len);
+        self.script_queue.blocking_recv_many(&mut buf, len);
+        for script in buf.drain(..) {}
+    }
+
+    pub fn add_source(&mut self, source: &str) {
+        let parser = self.isolate.global_state_mut().parser();
         parser.input_buffer.push_back(source.into());
-        parser.finish_async().await;
     }
     pub fn new(mut isolate: OwnedIsolate) -> JsDocument {
         let mut document = BaseDocument::new(Viewport::default());
-
         document.add_user_agent_stylesheet(blitz_dom::DEFAULT_CSS);
 
-        isolate.set_document(document);
-        isolate.setup_templates();
-        isolate.setup_listeners();
-        isolate.setup_context();
+        let global_state = GlobalState::new(&mut isolate, document);
+        isolate.set_global_state(global_state);
 
         Self::initialize(&mut isolate);
 
-        let parser = HtmlParser::new(isolate.as_mut());
-        isolate.set_parser(parser);
-
-        tokio::runtime::Handle::current().block_on(async {
-            init_fetch_thread(&mut isolate).await;
-        });
-
-        JsDocument { isolate }
+        JsDocument {
+            isolate,
+            script_queue,
+        }
     }
 
     // Setup global

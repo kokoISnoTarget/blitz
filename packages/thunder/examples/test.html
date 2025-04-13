@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Test Page</title>
+    <title>Someone forgot to remove the p tags. How good it is that we have js</title>
 </head>
 <body>
     <p>The world</p>
@@ -12,9 +12,7 @@
     let node_list_iter = node_list.entries();
     for(const pair of node_list_iter) {
        const [index, element] = pair;
-
-       console.log(`Index: ${index}: ` + element);
-       element.debug();
+       element.remove()
     }
     </script>
 </body>
