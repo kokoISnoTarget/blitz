@@ -1148,7 +1148,10 @@ impl BaseDocument {
 
     /// Scroll the viewport by the given values
     pub fn scroll_viewport_by(&mut self, x: f64, y: f64) {
-        let content_size = self.root_element().final_layout.size;
+        let Some(root_element) = self.try_root_element() else {
+            return;
+        };
+        let content_size = root_element.final_layout.size;
         let new_scroll = (self.viewport_scroll.x - x, self.viewport_scroll.y - y);
         let window_width = self.viewport.window_size.0 as f64 / self.viewport.scale() as f64;
         let window_height = self.viewport.window_size.1 as f64 / self.viewport.scale() as f64;

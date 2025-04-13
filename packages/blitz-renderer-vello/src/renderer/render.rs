@@ -131,7 +131,10 @@ impl VelloSceneGenerator<'_> {
         scene.reset();
         let viewport_scroll = self.dom.as_ref().viewport_scroll();
 
-        let root_element = self.dom.as_ref().root_element();
+        let Some(root_element) = self.dom.as_ref().try_root_element() else {
+            println!("No DOM - not rendering");
+            return;
+        };
         let root_id = root_element.id;
         let bg_width = (self.width as f32).max(root_element.final_layout.size.width);
         let bg_height = (self.height as f32).max(root_element.final_layout.size.height);
