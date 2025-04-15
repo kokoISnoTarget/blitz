@@ -4,8 +4,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct ImportMap {
+    #[serde(default)]
     pub imports: HashMap<String, String>,
+    #[serde(default)]
     pub scopes: HashMap<String, HashMap<String, String>>,
+    #[serde(default)]
     pub integrity: HashMap<String, String>,
 }
 impl ImportMap {
@@ -31,5 +34,10 @@ impl ImportMap {
             .map(|(k, mut v)| (f(&k), v.drain().map(|(k, v)| (k, f(&v))).collect()))
             .collect();
         self.integrity = self.integrity.drain().map(|(k, v)| (f(&k), v)).collect();
+    }
+
+    pub fn resolve(&self, specifier: &str) -> String {
+        // TODO: resolve scopes aswell and make api better and dont unwrap
+        self.imports.get(&specifier.to_string()).unwrap().clone()
     }
 }

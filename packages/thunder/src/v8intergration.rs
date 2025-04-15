@@ -8,6 +8,7 @@ use v8::{
 
 use crate::{
     HtmlParser,
+    application::EventProxy,
     fetch_thread::init_fetch_thread,
     importmap::ImportMap,
     module::ModuleMap,
@@ -33,7 +34,11 @@ pub struct GlobalState {
 }
 impl GlobalState {
     const GLOBAL_STATE_SLOT: u32 = 0;
-    pub fn new(isolate: &mut Isolate, mut document: BaseDocument) -> GlobalState {
+    pub fn new(
+        isolate: &mut Isolate,
+        mut document: BaseDocument,
+        proxy: EventProxy,
+    ) -> GlobalState {
         let mut scope = HandleScope::new(isolate);
         let context = Context::new(&mut scope, v8::ContextOptions::default());
         let context = Global::new(&mut scope, context);
@@ -43,7 +48,7 @@ impl GlobalState {
         let importmap = ImportMap::new();
         let modulemap = ModuleMap::new();
 
-        let (fetch_thread, provider_impl) = init_fetch_thread();
+        let (fetch_thread, provider_impl) = init_fetch_thread(proxy);
         document.set_net_provider(Arc::new(provider_impl));
 
         drop(scope);
@@ -93,6 +98,10 @@ impl GlobalState {
         &mut self.importmap
     }
 
+    pub fn modulemap(&mut self) -> &mut ModuleMap {
+        &mut self.modulemap
+    }
+
     pub fn get_fn_template<T: 'static>(&self) -> Option<Global<FunctionTemplate>> {
         let type_id = TypeId::of::<T>();
         self.function_templates.get(&type_id).cloned()
@@ -131,6 +140,7 @@ pub trait IsolateExt<'s> {
     fn event_listeners_mut(&mut self) -> &mut EventListeners;
     fn fetch_thread(&self) -> &FetchThread;
     fn importmap(&mut self) -> &mut ImportMap;
+    fn modulemap(&mut self) -> &mut ModuleMap;
     fn get_fn_template<T: 'static>(&self) -> Option<Global<FunctionTemplate>>;
     fn set_fn_template<T: 'static>(
         &mut self,
@@ -219,6 +229,10 @@ impl<'s> IsolateExt<'s> for Isolate {
 
     fn importmap(&mut self) -> &mut ImportMap {
         self.global_state_mut().importmap()
+    }
+
+    fn modulemap(&mut self) -> &mut ModuleMap {
+        self.global_state_mut().modulemap()
     }
 
     fn get_fn_template<T: 'static>(&self) -> Option<Global<FunctionTemplate>> {

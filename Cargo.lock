@@ -5900,6 +5900,7 @@ dependencies = [
  "blitz-renderer-vello",
  "blitz-shell",
  "blitz-traits",
+ "bytes",
  "data-url",
  "html5ever",
  "reqwest",

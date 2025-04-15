@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Dynamic Module Import</title>
+    </head>
+    <body>
+        <script type="importmap">
+          {
+            "imports": {
+              "dynamic": "./dynamic.js"
+            }
+          }
+        </script>
+        <script>
+          import("dynamic").then(module => {
+            module.do_crazy_stuff();
+          }).catch(error => {
+            console.error("Failed to load dynamic module:", error);
+          });
+        </script>
+    </body>
+</html>

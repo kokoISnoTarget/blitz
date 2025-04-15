@@ -113,6 +113,14 @@ fn query_selector_all(
     }
 }
 
+fn inner_html_setter(
+    scope: &mut HandleScope<'_>,
+    args: FunctionCallbackArguments<'_>,
+    mut retval: ReturnValue<'_>,
+) {
+    todo!()
+}
+
 pub struct Element {
     id: u32,
 }

@@ -1,7 +1,7 @@
 # Thunder
 V8 Integration for Blitz
 
-This is probably really insecure.
+This is probably really insecure at this point.
 
 TODO:
 - [x] Classic script tag (like in `examples/test.html`)

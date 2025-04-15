@@ -15,15 +15,18 @@ use tokio::{
     task::spawn_local,
 };
 use url::Url;
+use winit::window::WindowId;
 
+use crate::application::EventProxy;
 use crate::html::ShouldParse;
+use crate::module::ModuleId;
 
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:60.0) Gecko/20100101 Firefox/81.0";
 
-pub fn init_fetch_thread() -> (FetchThread, ProviderImpl) {
+pub fn init_fetch_thread(proxy: EventProxy) -> (FetchThread, ProviderImpl) {
     let (send, recv) = oneshot_channel();
 
-    std::thread::spawn(|| fetch_thread_main(send));
+    std::thread::spawn(|| fetch_thread_main(send, proxy));
 
     let (fetch_thread_sender, should_parse) = recv.blocking_recv().unwrap();
     let fetch_thread = FetchThread::new(fetch_thread_sender.clone());
@@ -35,7 +38,10 @@ pub fn init_fetch_thread() -> (FetchThread, ProviderImpl) {
 }
 
 #[tokio::main(flavor = "current_thread")]
-pub(crate) async fn fetch_thread_main(ret: OneshotSender<(UnboundedSender<ToFetch>, ShouldParse)>) {
+pub(crate) async fn fetch_thread_main(
+    ret: OneshotSender<(UnboundedSender<ToFetch>, ShouldParse)>,
+    proxy: EventProxy,
+) {
     let (sender, message_recv) = unbounded_channel();
     let message_sender = sender.clone();
 
@@ -49,9 +55,9 @@ pub(crate) async fn fetch_thread_main(ret: OneshotSender<(UnboundedSender<ToFetc
         message_sender,
         message_recv,
         tokio_handle: Handle::current(),
-        waker: None,
+        net_provider_callback: proxy.net_callback(),
+        proxy,
         client,
-        net_provider_callback: Arc::new(DummyNetCallback::default()),
     };
 
     state.receive().await;
@@ -65,9 +71,9 @@ pub enum ToFetch {
             blitz_traits::net::BoxedHandler<Resource>,
         )>,
     ),
-    SetCallbackForProvider(SharedCallback<Resource>),
+    FetchDocument(Box<Url>),
 
-    SetPollWaker(Waker),
+    SetAssociatedWindow(WindowId),
 
     FetchScript(Box<ScriptOptions>),
 
@@ -79,7 +85,7 @@ struct FetchThreadState {
     message_recv: UnboundedReceiver<ToFetch>,
     tokio_handle: Handle,
 
-    waker: Option<Waker>,
+    proxy: EventProxy,
 
     client: reqwest::Client,
 
@@ -95,32 +101,30 @@ impl FetchThreadState {
                     let bytes = response.into_bytes();
                     handler.bytes(doc_id, bytes, self.net_provider_callback.clone());
                 }
-                ToFetch::SetCallbackForProvider(callback) => {
-                    self.net_provider_callback = callback;
-                }
                 ToFetch::FetchScript(options) => {
-                    if options.is_defer || options.is_async || options.is_module {
-                        todo!();
-                    };
+                    if options.loading_style != ScriptLoadingStyle::Blocking {
+                        todo!()
+                    }
                     let response = self.fetch_request(Request::get(options.url.clone())).await;
 
                     let data = Box::new(Script {
                         options: *options,
                         data: response.into_bytes(),
                     });
-
-                    //self.script_queue_sender.send(data).unwrap();
-
-                    if let Some(ref waker) = self.waker {
-                        waker.wake_by_ref()
-                    }
+                    todo!()
                 }
-                ToFetch::SetPollWaker(waker) => {
-                    self.waker = Some(waker);
+                ToFetch::FetchDocument(url) => {
+                    let request = Request::get((*url).clone());
+                    let response = self.fetch_request(request).await;
+                    self.proxy
+                        .fetched_document((*url).into(), response.into_bytes());
                 }
                 ToFetch::Quit => {
                     self.message_recv.close();
                     break;
+                }
+                ToFetch::SetAssociatedWindow(window_id) => {
+                    self.proxy.set_window(window_id);
                 }
             }
         }
@@ -227,19 +231,16 @@ impl FetchThread {
             .send(ToFetch::FetchScript(Box::new(options)))
             .unwrap();
     }
-    pub fn set_net_provider_callback(&self, callback: SharedCallback<Resource>) {
+    pub fn fetch_document(&self, url: Url) {
         #[cfg(feature = "tracing")]
-        tracing::info!("FetchThread::set_net_provider_callback");
+        tracing::info!("FetchThread::fetch_document {}", url.as_str());
 
-        self.0
-            .send(ToFetch::SetCallbackForProvider(callback))
-            .unwrap();
+        self.0.send(ToFetch::FetchDocument(Box::new(url))).unwrap();
     }
-    pub fn set_waker(&self, waker: Waker) {
-        #[cfg(feature = "tracing")]
-        tracing::info!("FetchThread::set_waker");
-
-        self.0.send(ToFetch::SetPollWaker(waker)).unwrap();
+    pub fn set_window(&self, window_id: WindowId) {
+        self.0
+            .send(ToFetch::SetAssociatedWindow(window_id))
+            .unwrap();
     }
 }
 
@@ -275,9 +276,30 @@ impl Response {
 #[derive(Debug)]
 pub struct ScriptOptions {
     pub url: Url,
-    pub is_module: bool,
-    pub is_defer: bool,
-    pub is_async: bool,
+    pub module: Option<ModuleId>,
+    pub loading_style: ScriptLoadingStyle,
+}
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum ScriptLoadingStyle {
+    /// Clasic script which is fetched and executed while blocking parsing
+    Blocking,
+    /// Fetched without blocking parsing and executed after parsing ended
+    /// <script defer> and <script type="module">
+    AsyncDefer,
+    /// Fetched without blocking parsing and executed immediate after fetching completed this blocks parsing.
+    /// <script async> and <script type="module" async>
+    AsyncImmediate,
+}
+impl ScriptLoadingStyle {
+    pub fn from_attrs(is_async: bool, is_defer: bool, is_module: bool) -> ScriptLoadingStyle {
+        if is_async {
+            ScriptLoadingStyle::AsyncImmediate
+        } else if is_defer || is_module {
+            ScriptLoadingStyle::AsyncDefer
+        } else {
+            ScriptLoadingStyle::Blocking
+        }
+    }
 }
 
 pub struct DocumentHandler(pub OneshotSender<Bytes>);

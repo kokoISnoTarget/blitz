@@ -1,5 +1,8 @@
 use crate::{
-    fetch_thread::ScriptOptions, importmap::ImportMap, util::IsolatePtr, v8intergration::IsolateExt,
+    fetch_thread::{ScriptLoadingStyle, ScriptOptions},
+    importmap::ImportMap,
+    util::IsolatePtr,
+    v8intergration::IsolateExt,
 };
 use blitz_dom::{
     ElementNodeData, Node, NodeData, local_name,
@@ -64,9 +67,9 @@ impl HtmlParser {
             finished: false,
         }
     }
-    pub fn feed(&mut self, cx: std::task::Context) {
+    pub fn feed(&mut self) {
         while let TokenizerResult::Script(node_id) = self.tokenizer.feed(&self.input_buffer) {
-            if !self.tokenizer.sink.sink.add_script(node_id, &cx) {
+            if !self.tokenizer.sink.sink.add_script(node_id) {
                 break;
             }
         }
@@ -98,11 +101,11 @@ impl HtmlSink {
     }
     fn finish_steps(&mut self) {
         let doc = self.isolate.document_mut();
-        for id in self.style_nodes.borrow().iter() {
-            doc.process_style_element(*id);
+        for id in self.style_nodes.borrow_mut().drain(..) {
+            doc.process_style_element(id);
         }
     }
-    fn add_script(&mut self, node_id: usize, cx: &Context) -> bool {
+    fn add_script(&mut self, node_id: usize) -> bool {
         let script_node = self.node(node_id);
         let attrs = script_node.attrs().unwrap();
 
@@ -138,9 +141,8 @@ impl HtmlSink {
             let url = self.isolate.document().resolve_url(&src);
             self.isolate.fetch_thread().fetch(ScriptOptions {
                 url,
-                is_module,
-                is_defer,
-                is_async,
+                module: None,
+                loading_style: ScriptLoadingStyle::from_attrs(is_async, is_defer, is_module),
             });
             false
         } else {
