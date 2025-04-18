@@ -16,6 +16,12 @@ pub fn add_document(scope: &mut HandleScope<'_>, global: Local<Object>) {
     add_function_to_object(scope, &document_value, "getElementById", get_element_by_id);
     add_function_to_object(scope, &document_value, "debugTree", debug_tree);
 
+    let location = fast_str!("location").to_v8(scope);
+    let location_value = Location.object(scope);
+    document_value
+        .set(scope, location.cast(), location_value.cast())
+        .unwrap();
+
     global
         .set(scope, document_name.into(), document_value.into())
         .unwrap();

@@ -2,6 +2,7 @@ pub mod console;
 pub mod document;
 pub mod element;
 mod event;
+pub mod location;
 mod node_list;
 pub mod util;
 pub mod window;
@@ -10,7 +11,9 @@ pub use console::add_console;
 pub use document::add_document;
 pub use element::Element;
 pub use event::EventObject;
+use location::Location;
 pub use node_list::NodeList;
+pub use util::*;
 pub use window::add_window;
 
 pub use util::*;
@@ -63,4 +66,5 @@ pub fn init_templates(scope: &mut HandleScope) {
     Element::init(scope);
     EventObject::init(scope);
     NodeList::init(scope);
+    Location::init(scope);
 }
