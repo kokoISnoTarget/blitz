@@ -30,7 +30,7 @@ pub struct WindowConfig<
     Doc: Document<Doc = BaseDocument>,
     Rend: DocumentRenderer<Doc = BaseDocument>,
 > {
-    doc: Doc,
+    pub doc: Doc,
     attributes: WindowAttributes,
     rend: PhantomData<Rend>,
 }

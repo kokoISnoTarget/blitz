@@ -15,7 +15,7 @@ type D = BaseDocument;
 
 pub struct BlitzApplication<Doc: Document<Doc = D>, Rend: DocumentRenderer<Doc = D>> {
     pub windows: HashMap<WindowId, View<Doc, Rend>>,
-    pending_windows: Vec<WindowConfig<Doc, Rend>>,
+    pub pending_windows: Vec<WindowConfig<Doc, Rend>>,
     proxy: EventLoopProxy<BlitzShellEvent>,
 
     #[cfg(all(feature = "menu", not(any(target_os = "android", target_os = "ios"))))]
