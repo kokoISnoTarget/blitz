@@ -20,6 +20,7 @@ use winit::window::WindowId;
 use crate::application::EventProxy;
 use crate::html::ShouldParse;
 use crate::module::ModuleId;
+use crate::objects::xmlhttprequest::XhrReadyStateCallback;
 
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:60.0) Gecko/20100101 Firefox/81.0";
 
@@ -77,6 +78,8 @@ pub enum ToFetch {
 
     FetchScript(Box<ScriptOptions>),
 
+    XhrRequest(Box<XhrRequestDetails>),
+
     Quit,
 }
 
@@ -95,42 +98,61 @@ impl FetchThreadState {
     async fn receive(&mut self) {
         while let Some(message) = self.message_recv.recv().await {
             match message {
-                ToFetch::FetchForProvider(data) => {
-                    let (doc_id, request, handler) = *data;
-                    let response = self.fetch_request(request).await;
-                    let bytes = response.into_bytes();
-                    handler.bytes(doc_id, bytes, self.net_provider_callback.clone());
-                }
-                ToFetch::FetchScript(options) => {
-                    if options.loading_style != ScriptLoadingStyle::Blocking {
-                        todo!()
-                    }
-                    let response = self.fetch_request(Request::get(options.url.clone())).await;
-
-                    let data = Box::new(Script {
-                        options: *options,
-                        data: response.into_bytes(),
-                    });
-                    todo!()
-                }
-                ToFetch::FetchDocument(url) => {
-                    let request = Request::get((*url).clone());
-                    let response = self.fetch_request(request).await;
-                    self.proxy
-                        .fetched_document((*url).into(), response.into_bytes());
-                }
                 ToFetch::Quit => {
                     self.message_recv.close();
                     break;
                 }
                 ToFetch::SetAssociatedWindow(window_id) => {
+                    // This is a simple operation that affects state, do it inline
                     self.proxy.set_window(window_id);
+                }
+                // Spawn concurrent tasks for the fetch operations
+                other_message => {
+                    let client = self.client.clone();
+                    let proxy = self.proxy.clone();
+                    let net_provider_callback = self.net_provider_callback.clone();
+
+                    spawn(async move {
+                        match other_message {
+                            ToFetch::FetchForProvider(data) => {
+                                let (doc_id, request, handler) = *data;
+                                let response = Self::fetch_request(&client, request).await;
+                                let bytes = response.into_bytes();
+                                handler.bytes(doc_id, bytes, net_provider_callback.clone());
+                            }
+                            ToFetch::FetchScript(options) => {
+                                if options.loading_style != ScriptLoadingStyle::Blocking {
+                                    proxy.repoll_parser();
+                                    todo!("Only clasic script suported currently");
+                                }
+                                let response =
+                                    Self::fetch_request(&client, Request::get(options.url.clone()))
+                                        .await;
+
+                                //let data = Box::new(Script {
+                                //    options: *options,
+                                //    data: response.into_bytes(),
+                                //});
+                                proxy.fetched_script(response.into_bytes(), options);
+                            }
+                            ToFetch::FetchDocument(url) => {
+                                let request = Request::get((*url).clone());
+                                let response = Self::fetch_request(&client, request).await;
+
+                                proxy.fetched_document((*url).into(), response.into_bytes());
+                            }
+                            ToFetch::XhrRequest(details) => {
+                                //Self::fetch_xhr_request(&client, *details, proxy).await;
+                            }
+                            _ => unreachable!(),
+                        }
+                    });
                 }
             }
         }
     }
 
-    async fn fetch_request(&self, request: Request) -> Response {
+    async fn fetch_request(client: &reqwest::Client, request: Request) -> Response {
         match request.url.scheme() {
             "data" => {
                 let data_url = data_url::DataUrl::process(request.url.as_str()).unwrap();
@@ -142,8 +164,7 @@ impl FetchThreadState {
                 Response::new_local(file_content.into())
             }
             _ => {
-                let response = self
-                    .client
+                let response = client
                     .request(request.method, request.url)
                     .headers(request.headers)
                     .header("User-Agent", USER_AGENT)
@@ -159,36 +180,6 @@ impl FetchThreadState {
         }
     }
 }
-
-// fn callback_inner(isolate: &mut Isolate, callback_data: CallbackData) {
-//     let mut scope = isolate.context_scope();
-
-//     let source_string =
-//         v8::String::new_from_utf8(&mut scope, &callback_data.data, v8::NewStringType::Normal)
-//             .unwrap();
-//     //let origin = v8::ScriptOrigin::new(scope, resource_name, resource_line_offset, resource_column_offset, resource_is_shared_cross_origin, script_id, source_map_url, resource_is_opaque, is_wasm, is_module, host_defined_options)
-//     let source = &mut Source::new(source_string, None);
-//     if callback_data.is_module {
-//         let module = script_compiler::compile_module2(
-//             &mut scope,
-//             source,
-//             CompileOptions::NoCompileOptions,
-//             NoCacheReason::NoReason,
-//         )
-//         .unwrap()
-//         .evaluate(&mut scope);
-//         //.instantiate_module2(scope, callback, source_callback)
-//     } else {
-//         script_compiler::compile(
-//             &mut scope,
-//             source,
-//             CompileOptions::NoCompileOptions,
-//             NoCacheReason::NoReason,
-//         )
-//         .unwrap()
-//         .run(&mut scope);
-//     }
-//}
 
 pub struct Script {
     options: ScriptOptions,
@@ -242,6 +233,12 @@ impl FetchThread {
             .send(ToFetch::SetAssociatedWindow(window_id))
             .unwrap();
     }
+
+    pub fn send_xhr_request(&self, details: XhrRequestDetails) {
+        #[cfg(feature = "tracing")]
+        tracing::info!(method = %details.method, url = %details.url, "[FetchThread] Queuing XHR request");
+        self.0.send(ToFetch::XhrRequest(Box::new(details))).unwrap();
+    }
 }
 
 enum Response {
@@ -273,7 +270,7 @@ impl Response {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ScriptOptions {
     pub url: Url,
     pub module: Option<ModuleId>,
@@ -308,4 +305,25 @@ impl NetHandler for DocumentHandler {
     fn bytes(self: Box<Self>, _doc_id: usize, bytes: Bytes, _callback: SharedCallback<Self::Data>) {
         self.0.send(bytes).unwrap();
     }
+}
+
+pub struct XhrRequestDetails {
+    pub method: reqwest::Method,
+    pub url: Url,
+    pub headers: HeaderMap,
+    pub body: Option<Bytes>,
+    pub callback: XhrReadyStateCallback,
+}
+impl std::fmt::Debug for XhrRequestDetails {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
+
+#[derive(Debug)]
+pub struct XhrResponseDetails {
+    pub status: u16,
+    pub status_text: String,
+    pub headers: HeaderMap,
+    pub body: Bytes,
 }

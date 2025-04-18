@@ -6,6 +6,7 @@ pub mod location;
 mod node_list;
 pub mod util;
 pub mod window;
+pub mod xmlhttprequest;
 
 pub use console::add_console;
 pub use document::add_document;
@@ -15,13 +16,13 @@ use location::Location;
 pub use node_list::NodeList;
 pub use util::*;
 pub use window::add_window;
-
-pub use util::*;
+pub use xmlhttprequest::XMLHttpRequest;
 
 mod tags {
     pub const ELEMENT: u16 = 0x0001;
     pub const EVENT: u16 = 0x0002;
     pub const NODE_LIST: u16 = 0x0003;
+    pub const XML_HTTP_REQUEST: u16 = 0x0004;
 }
 pub use tags::*;
 
@@ -67,4 +68,5 @@ pub fn init_templates(scope: &mut HandleScope) {
     EventObject::init(scope);
     NodeList::init(scope);
     Location::init(scope);
+    XMLHttpRequest::init(scope);
 }
