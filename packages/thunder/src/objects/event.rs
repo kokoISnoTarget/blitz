@@ -16,6 +16,7 @@ impl GarbageCollected for EventObject {
 }
 impl WrappedObject for EventObject {
     const TAG: u16 = super::EVENT;
+    const CLASS_NAME: &'static str = "Event";
 
     fn init_template<'s>(scope: &mut HandleScope<'s>, proto: Local<ObjectTemplate>) {}
 }

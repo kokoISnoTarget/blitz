@@ -16,6 +16,7 @@ impl GarbageCollected for NodeList {
 }
 impl WrappedObject for NodeList {
     const TAG: u16 = NODE_LIST;
+    const CLASS_NAME: &'static str = "NodeList";
 
     fn init_template<'s>(scope: &mut HandleScope<'s>, proto: Local<ObjectTemplate>) {
         let indexed_config = IndexedPropertyHandlerConfiguration::new().getter(index);

@@ -3,7 +3,9 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::v8intergration::IsolateExt;
+use v8::OneByteConst;
+
+use crate::v8intergration::{HandleScopeExt, IsolateExt};
 
 use super::*;
 
@@ -72,16 +74,29 @@ pub trait WrappedObject: GarbageCollected {
     ) {
     }
 
+    const CLASS_NAME: &'static str;
+    const NAME: v8::OneByteConst =
+        v8::String::create_external_onebyte_const(Self::CLASS_NAME.as_bytes());
+
     fn init<'s>(scope: &mut HandleScope<'s>)
     where
         Self: Sized + 'static,
     {
         let template = FunctionTemplate::new(scope, Self::init_function);
+
+        let class_name = Self::NAME.to_v8(scope);
+        template.set_class_name(class_name);
+
         let proto = template.prototype_template(scope);
         proto.set_internal_field_count(1);
 
         Self::init_template(scope, proto);
 
+        let function = template.get_function(scope).unwrap();
+        scope
+            .global_this()
+            .set(scope, class_name.cast(), function.cast())
+            .unwrap();
         scope.set_fn_template::<Self>(template);
     }
 

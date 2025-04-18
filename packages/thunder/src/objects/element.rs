@@ -126,6 +126,7 @@ pub struct Element {
 }
 impl WrappedObject for Element {
     const TAG: u16 = super::ELEMENT;
+    const CLASS_NAME: &'static str = "Element";
 
     fn init_template<'s>(scope: &mut HandleScope<'s>, proto: Local<ObjectTemplate>) {
         let remove_name = fast_str!("remove").to_v8(scope);
