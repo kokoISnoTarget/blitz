@@ -487,6 +487,10 @@ impl BaseDocument {
         })
     }
 
+    pub fn base_url(&self) -> Option<&url::Url> {
+        self.base_url.as_ref()
+    }
+
     pub fn print_tree(&self) {
         crate::util::walk_tree(0, self.root_node());
     }
