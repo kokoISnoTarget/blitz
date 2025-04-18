@@ -32,7 +32,6 @@ use std::{
     },
     task::Waker,
 };
-use std::{collections::HashMap, task::Context};
 use v8::{Isolate, script_compiler::CompileOptions};
 
 /// Convert an html5ever Attribute which uses tendril for its value to a blitz Attribute
@@ -161,7 +160,7 @@ impl HtmlSink {
                 &mut try_catch,
                 &mut source,
                 CompileOptions::EagerCompile,
-                v8::script_compiler::NoCacheReason::NoReason,
+                v8::script_compiler::NoCacheReason::BecauseInlineScript,
             )
             .unwrap()
             .run(&mut try_catch)

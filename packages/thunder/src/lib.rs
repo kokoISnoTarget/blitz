@@ -83,7 +83,7 @@ pub fn launch_url(url: &str) {
         .unwrap();
     let _enter = runtime.enter();
 
-    let mut doc = JsDocument::new(isolate, event_loop.create_proxy());
+    let doc = JsDocument::new(isolate, event_loop.create_proxy());
 
     doc.isolate
         .fetch_thread()
@@ -95,7 +95,7 @@ pub fn launch_url(url: &str) {
         WindowConfig::with_attributes(doc, window_attributes);
 
     // Create application
-    let mut application = BlitzApplication::new(event_loop.create_proxy());
+    let mut application = ThunderApplication::new(event_loop.create_proxy());
     application.add_window(window);
 
     // Run event loop

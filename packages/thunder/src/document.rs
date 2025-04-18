@@ -1,10 +1,11 @@
 use crate::{
     application::{EventProxy, ThunderEventType},
     fast_str,
+    fetch_thread::ScriptLoadingStyle,
     module::{host_import_module_dynamically_callback, initialize_import_meta_object_callback},
     objects::{
         Element, EventObject, WrappedObject, add_console, add_document, add_window, init_js_files,
-        init_templates,
+        init_templates, location::add_location,
     },
     rusty_v8_ext::HostInitializeImportMetaObjectCallback,
     util::OneByteConstExt,
@@ -20,8 +21,9 @@ use std::{
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 use url::Url;
 use v8::{
-    Context, ContextOptions, ContextScope, Function, Global, HandleScope, Isolate, Local, Object,
-    OwnedIsolate, Value,
+    Context, ContextOptions, ContextScope, Function, Global, HandleScope, Isolate, Local,
+    NewStringType, Object, OwnedIsolate, ScriptOrigin, TryCatch, Value,
+    script_compiler::{CompileOptions, NoCacheReason, Source},
 };
 use winit::{event_loop::EventLoopProxy, window::WindowId};
 use xml5ever::tendril::StrTendril;
@@ -59,18 +61,6 @@ impl Document for JsDocument {
     fn id(&self) -> usize {
         self.as_ref().id()
     }
-
-    fn poll(&mut self, cx: std::task::Context) -> bool {
-        self.run_script_queue();
-
-        let parser = self.isolate.parser();
-        if parser.finished {
-            return false;
-        }
-        parser.feed();
-        parser.try_finish();
-        true
-    }
 }
 impl From<JsDocument> for BaseDocument {
     fn from(mut js_doc: JsDocument) -> BaseDocument {
@@ -91,15 +81,90 @@ impl AsMut<BaseDocument> for JsDocument {
 impl JsDocument {
     pub(crate) fn thunder_event(&mut self, event: &ThunderEventType) {
         match event {
-            ThunderEventType::ScriptFetched { script_id, content } => todo!(),
+            ThunderEventType::ScriptFetched { content, options } => {
+                let mut scope = self.isolate.context_scope();
+                let source_string =
+                    v8::String::new_from_utf8(&mut scope, content, NewStringType::Normal).unwrap();
+                let name = v8::String::new(&mut scope, options.url.as_str()).unwrap();
+                let origin = ScriptOrigin::new(
+                    &mut scope,
+                    name.cast(),
+                    0,
+                    0,
+                    false,
+                    0,
+                    None,
+                    false,
+                    false,
+                    false,
+                    None,
+                );
+                let source = &mut Source::new(source_string, Some(&origin));
+
+                match options.loading_style {
+                    ScriptLoadingStyle::Blocking | ScriptLoadingStyle::AsyncImmediate => {
+                        let mut try_catch = TryCatch::new(&mut scope);
+
+                        let failed = v8::script_compiler::compile(
+                            &mut try_catch,
+                            source,
+                            CompileOptions::EagerCompile,
+                            NoCacheReason::BecauseNoResource,
+                        )
+                        .unwrap()
+                        .run(&mut try_catch)
+                        .is_none();
+                        if failed {
+                            let stack_trace = try_catch
+                                .stack_trace()
+                                .or_else(|| try_catch.exception())
+                                .map_or_else(
+                                    || "no stack trace".into(),
+                                    |value| value.to_rust_string_lossy(&mut try_catch),
+                                );
+                            #[cfg(feature = "tracing")]
+                            tracing::error!("Running script failed: \n{}", stack_trace);
+                        }
+
+                        if options.loading_style == ScriptLoadingStyle::Blocking {
+                            drop(try_catch);
+                            drop(scope);
+
+                            self.isolate.event_proxy().repoll_parser();
+                        }
+                    }
+                    ScriptLoadingStyle::AsyncDefer => {
+                        let script = v8::script_compiler::compile_unbound_script(
+                            &mut scope,
+                            source,
+                            CompileOptions::NoCompileOptions,
+                            NoCacheReason::BecauseNoResource,
+                        )
+                        .unwrap();
+                        let script = Global::new(&mut scope, script);
+                        drop(scope);
+                        self.isolate.global_state_mut().defered_scripts.push(script);
+                    }
+                }
+            }
             ThunderEventType::ModuleFetched {
                 parent_id,
                 module_id,
                 content,
+                options,
             } => todo!(),
             ThunderEventType::DocumentFetched { url, bytes } => {
                 self.set_base_url(&url);
                 self.add_source(String::from_utf8(bytes.to_vec()).unwrap());
+                self.isolate.event_proxy().repoll_parser();
+            }
+            ThunderEventType::RepollParser => {
+                let parser = self.isolate.parser();
+                if parser.finished {
+                    return;
+                }
+                parser.feed();
+                parser.try_finish();
             }
         }
     }
@@ -147,6 +212,7 @@ impl JsDocument {
         add_document(&mut scope, global);
         add_console(&mut scope, global);
         add_window(&mut scope, global);
+        add_location(&mut scope, global);
 
         init_js_files(&mut scope);
     }

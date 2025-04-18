@@ -13,6 +13,7 @@ use crate::{
     importmap::ImportMap,
     module::ModuleMap,
     objects::{BuildTypeIdHasher, Element, EventObject, FetchThread, NodeList, WrappedObject},
+    script::DeferedScripts,
     util::IsolatePtr,
 };
 
@@ -23,10 +24,12 @@ type EventListeners = HashMap<u32, HashMap<String, Global<Value>>>;
 
 pub struct GlobalState {
     pub(crate) document: BaseDocument,
+    pub(crate) event_proxy: EventProxy,
     pub(crate) parser: HtmlParser,
     pub(crate) fetch_thread: FetchThread,
     pub(crate) importmap: ImportMap,
     pub(crate) modulemap: ModuleMap,
+    pub(crate) defered_scripts: DeferedScripts,
     pub(crate) event_listeners: EventListeners,
     pub(crate) function_templates: FunctionTemplatesMap,
     pub(crate) object_templates: ObjectTemplatesMap,
@@ -37,7 +40,7 @@ impl GlobalState {
     pub fn new(
         isolate: &mut Isolate,
         mut document: BaseDocument,
-        proxy: EventProxy,
+        event_proxy: EventProxy,
     ) -> GlobalState {
         let mut scope = HandleScope::new(isolate);
         let context = Context::new(&mut scope, v8::ContextOptions::default());
@@ -47,18 +50,21 @@ impl GlobalState {
         let event_listeners = HashMap::new();
         let importmap = ImportMap::new();
         let modulemap = ModuleMap::new();
+        let defered_scripts = DeferedScripts::new();
 
-        let (fetch_thread, provider_impl) = init_fetch_thread(proxy);
+        let (fetch_thread, provider_impl) = init_fetch_thread(event_proxy.clone());
         document.set_net_provider(Arc::new(provider_impl));
 
         drop(scope);
 
         GlobalState {
             parser: HtmlParser::new(isolate, document.id()),
+            event_proxy,
             document,
             fetch_thread,
             importmap,
             modulemap,
+            defered_scripts,
             event_listeners,
             function_templates,
             object_templates,
@@ -82,6 +88,14 @@ impl GlobalState {
     // Fetch thread accessor method
     pub fn fetch_thread(&self) -> &FetchThread {
         &self.fetch_thread
+    }
+
+    pub fn event_proxy(&self) -> &EventProxy {
+        &self.event_proxy
+    }
+
+    pub fn event_proxy_mut(&mut self) -> &mut EventProxy {
+        &mut self.event_proxy
     }
 
     // Event listeners accessor methods
@@ -136,6 +150,8 @@ pub trait IsolateExt<'s> {
     fn document_mut(&mut self) -> &mut BaseDocument;
     fn document_mut_from_ref(&self) -> &mut BaseDocument;
     fn parser(&mut self) -> &mut HtmlParser;
+    fn event_proxy(&self) -> &EventProxy;
+    fn event_proxy_mut(&mut self) -> &mut EventProxy;
     fn event_listeners(&self) -> &EventListeners;
     fn event_listeners_mut(&mut self) -> &mut EventListeners;
     fn fetch_thread(&self) -> &FetchThread;
@@ -214,7 +230,13 @@ impl<'s> IsolateExt<'s> for Isolate {
     fn parser(&mut self) -> &mut HtmlParser {
         self.global_state_mut().parser()
     }
+    fn event_proxy(&self) -> &EventProxy {
+        self.global_state().event_proxy()
+    }
 
+    fn event_proxy_mut(&mut self) -> &mut EventProxy {
+        self.global_state_mut().event_proxy_mut()
+    }
     fn event_listeners(&self) -> &EventListeners {
         self.global_state().event_listeners()
     }
