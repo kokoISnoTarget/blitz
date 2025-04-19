@@ -2,20 +2,19 @@
 use tracing::*;
 
 use super::*;
-use crate::v8intergration::{HandleScopeExt as _, IsolateExt}; // Import the extension trait
-use std::sync::{Arc, Mutex};
-// TODO: Add reqwest to Cargo.toml
-use crate::fetch_thread::{FetchThread, ToFetch, XhrRequestDetails, XhrResponseDetails}; // Removed Bytes import
-use blitz_dom::net::Resource; // For NetHandler associated type
-use blitz_traits::net::{Bytes, NetHandler, SharedCallback, http}; // Restored Bytes import here
+use crate::fetch_thread::{FetchThread, ToFetch, XhrRequestDetails, XhrResponseDetails};
+use crate::v8intergration::{HandleScopeExt as _, IsolateExt};
+use blitz_dom::net::Resource;
+use blitz_traits::net::{Bytes, NetHandler, SharedCallback, http};
 use reqwest::header::HeaderMap;
-use reqwest::{self, Method}; // Assuming reqwest is used by FetchThread internally
+use reqwest::{self, Method};
 use std::ffi::c_void;
-use tokio::sync::mpsc::UnboundedSender; // For FetchThread sender type
+use std::num::NonZeroU64;
+use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc::UnboundedSender;
 use url::Url; // Use http::Method
-use v8::{Function, Global, Local, Object, TryCatch}; // Added Object
+use v8::{Function, Global, Local, Object, TryCatch};
 
-// Represents the state of an XMLHttpRequest according to the spec
 // https://xhr.spec.whatwg.org/#states
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -27,17 +26,24 @@ enum ReadyState {
     Done = 4,
 }
 
+pub enum XHRResponseType {
+    Text,
+    Binary,
+}
+
 // Internal state for XMLHttpRequest
-// Needs to be Send + Sync to be safely shared across threads
 pub(crate) struct XMLHttpRequestState {
     ready_state: ReadyState,
-    method: Option<http::Method>, // Use http::Method
-    url: Option<url::Url>,        // Use url::Url
-    // async: bool, // TODO
-    status: u16, // HTTP status code
+    method: Option<http::Method>,
+    url: Option<url::Url>,
+    // async: bool,
+    status: u16,
     status_text: String,
-    response_text: Option<String>,
-    // TODO: Add request headers, response headers, etc.
+
+    response: Bytes,
+    response_type: XHRResponseType,
+
+    timeout: Option<NonZeroU64>,
 }
 
 impl Default for XMLHttpRequestState {
@@ -48,7 +54,9 @@ impl Default for XMLHttpRequestState {
             url: None,
             status: 0,
             status_text: String::new(),
-            response_text: None,
+            response: Bytes::new(),
+            response_type: XHRResponseType::Text,
+            timeout: None,
         }
     }
 }
@@ -70,36 +78,18 @@ impl WrappedObject for XMLHttpRequest {
     const TAG: u16 = XML_HTTP_REQUEST;
 
     fn init_template<'s>(scope: &mut v8::HandleScope<'s>, proto: v8::Local<v8::ObjectTemplate>) {
-        // --- Properties ---
-        let readystate_key = v8::String::new(scope, "readyState").unwrap();
-        proto.set_accessor(readystate_key.into(), Self::get_ready_state);
-
-        let status_key = v8::String::new(scope, "status").unwrap();
-        proto.set_accessor(status_key.cast(), Self::get_status);
-
-        // TODO: Add statusText getter
-
-        let responsetext_key = v8::String::new(scope, "responseText").unwrap();
-        proto.set_accessor(responsetext_key.into(), Self::get_response_text);
-
-        let onreadystatechange_key = v8::String::new(scope, "onreadystatechange").unwrap();
-        proto.set_accessor_with_setter(
-            onreadystatechange_key.into(),
-            Self::get_onreadystatechange,
-            Self::set_onreadystatechange,
-        ); // Use actual getter
-
-        // --- Methods ---
-        let open_key = v8::String::new(scope, "open").unwrap();
+        let open_key = fast_str!("open").to_v8(scope);
         let open_fn = v8::FunctionTemplate::new(scope, Self::open);
         proto.set(open_key.into(), open_fn.into());
 
-        let send_key = v8::String::new(scope, "send").unwrap();
+        let send_key = fast_str!("send").to_v8(scope);
         let send_fn = v8::FunctionTemplate::new(scope, Self::send);
         proto.set(send_key.into(), send_fn.into());
 
-        // TODO: Add setRequestHeader, getResponseHeader, getAllResponseHeaders, abort
-        // TODO: Add event handlers (onreadystatechange, onload, onerror, etc.)
+        // event handler(s)
+        let onload_key = fast_str!("onload").to_v8(scope);
+        let onload_fn = v8::FunctionTemplate::new(scope, Self::onload);
+        proto.set_at
     }
 
     const CLASS_NAME: &'static str = "XMLHttpRequest";

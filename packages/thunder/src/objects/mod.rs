@@ -2,6 +2,7 @@ pub mod console;
 pub mod document;
 pub mod element;
 mod event;
+mod event_handler;
 pub mod location;
 mod node_list;
 pub mod util;
@@ -23,6 +24,7 @@ mod tags {
     pub const EVENT: u16 = 0x0002;
     pub const NODE_LIST: u16 = 0x0003;
     pub const XML_HTTP_REQUEST: u16 = 0x0004;
+    pub const EVENT_HANDLER: u16 = 0x0005;
 }
 pub use tags::*;
 
