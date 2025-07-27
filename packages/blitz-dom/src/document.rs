@@ -97,6 +97,9 @@ pub struct BaseDocument {
     /// There is no way to create the tree - publicly or privately - that would invalidate that invariant.
     pub(crate) nodes: Box<Slab<Node>>,
 
+    /// The flattened tree of node ids
+    pub(crate) index_map: Vec<usize>,
+
     // Stylo
     /// The Stylo engine
     pub(crate) stylist: Stylist,
@@ -219,6 +222,7 @@ impl BaseDocument {
             id,
             guard,
             nodes,
+            index_map: Vec::new(),
             stylist,
             snapshots,
             nodes_to_id,
@@ -269,7 +273,7 @@ impl BaseDocument {
             ..Default::default()
         };
         *doc.root_node().stylo_element_data.borrow_mut() = Some(stylo_element_data);
-
+        doc.make_index_map();
         doc
     }
 
@@ -1145,6 +1149,11 @@ impl BaseDocument {
 
             false
         })
+    }
+
+    pub(crate) fn make_index_map(&mut self) {
+        self.index_map.clear();
+        TreeTraverser::new(self).collect_into(&mut self.index_map);
     }
 }
 
