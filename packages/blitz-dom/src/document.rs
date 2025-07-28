@@ -4,6 +4,7 @@ use crate::layout::construct::collect_layout_children;
 use crate::mutator::ViewportMut;
 use crate::net::{Resource, StylesheetLoader};
 use crate::node::{ImageData, NodeFlags, RasterImageData, SpecialElementData, Status, TextBrush};
+use crate::range::Selection;
 use crate::stylo_to_cursor_icon::stylo_to_cursor_icon;
 use crate::traversal::TreeTraverser;
 use crate::url::DocumentUrl;
@@ -122,6 +123,8 @@ pub struct BaseDocument {
     pub(crate) active_node_id: Option<usize>,
     /// The node which recieved a mousedown event (if any)
     pub(crate) mousedown_node_id: Option<usize>,
+    /// Selected text/nodes
+    pub(crate) selection: Selection,
     /// Whether there are active animations (so we should re-render every frame)
     pub(crate) is_animating: bool,
 
