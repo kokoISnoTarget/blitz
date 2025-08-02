@@ -16,6 +16,14 @@ fn app() -> Element {
             form {
                 div {
                     input {
+                        type: "text",
+                        id: "text1",
+                        name: "text1",
+                        value: "text1",
+                    }
+                }
+                div {
+                    input {
                         type: "checkbox",
                         id: "check1",
                         name: "check1",

@@ -1,28 +1,43 @@
+use slab::Slab;
 use style::dom::TNode as _;
 
 use crate::{BaseDocument, Node};
 
+trait Tree {
+    fn get_node(&self, id: usize) -> Option<&Node>;
+}
+impl Tree for BaseDocument {
+    fn get_node(&self, id: usize) -> Option<&Node> {
+        self.get_node(id)
+    }
+}
+impl Tree for Slab<Node> {
+    fn get_node(&self, id: usize) -> Option<&Node> {
+        self.get(id)
+    }
+}
+
 #[derive(Clone)]
 /// An pre-order tree traverser for a [BaseDocument](crate::document::BaseDocument).
-pub struct TreeTraverser<'a> {
-    doc: &'a BaseDocument,
+pub struct TreeTraverser<'a, T> {
+    doc: &'a T,
     stack: Vec<usize>,
 }
 
-impl<'a> TreeTraverser<'a> {
+impl<'a, T> TreeTraverser<'a, T> {
     /// Creates a new tree traverser for the given document which starts at the root node.
-    pub fn new(doc: &'a BaseDocument) -> Self {
+    pub fn new(doc: &'a T) -> TreeTraverser<'a, T> {
         Self::new_with_root(doc, 0)
     }
 
     /// Creates a new tree traverser for the given document which starts at the specified node.
-    pub fn new_with_root(doc: &'a BaseDocument, root: usize) -> Self {
+    pub fn new_with_root(doc: &'a T, root: usize) -> TreeTraverser<'a, T> {
         let mut stack = Vec::with_capacity(32);
         stack.push(root);
         TreeTraverser { doc, stack }
     }
 }
-impl Iterator for TreeTraverser<'_> {
+impl<T: Tree> Iterator for TreeTraverser<'_, T> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -35,20 +50,20 @@ impl Iterator for TreeTraverser<'_> {
 
 #[derive(Clone)]
 /// An ancestor traverser for a [BaseDocument](crate::document::BaseDocument).
-pub struct AncestorTraverser<'a> {
-    doc: &'a BaseDocument,
+pub struct AncestorTraverser<'a, T> {
+    doc: &'a T,
     current: usize,
 }
-impl<'a> AncestorTraverser<'a> {
+impl<'a, T> AncestorTraverser<'a, T> {
     /// Creates a new ancestor traverser for the given document and node ID.
-    pub fn new(doc: &'a BaseDocument, node_id: usize) -> Self {
+    pub fn new(doc: &'a T, node_id: usize) -> AncestorTraverser<'a, T> {
         AncestorTraverser {
             doc,
             current: node_id,
         }
     }
 }
-impl Iterator for AncestorTraverser<'_> {
+impl<T: Tree> Iterator for AncestorTraverser<'_, T> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {

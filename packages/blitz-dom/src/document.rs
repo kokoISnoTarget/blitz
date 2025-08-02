@@ -19,6 +19,7 @@ use blitz_traits::navigation::{DummyNavigationProvider, NavigationProvider};
 use blitz_traits::net::{DummyNetProvider, NetProvider, SharedProvider};
 use blitz_traits::shell::{ColorScheme, DummyShellProvider, ShellProvider, Viewport};
 use cursor_icon::CursorIcon;
+use indexmap::IndexMap;
 use debug_timer::debug_timer;
 use markup5ever::local_name;
 use parley::FontContext;
@@ -98,8 +99,8 @@ pub struct BaseDocument {
     /// There is no way to create the tree - publicly or privately - that would invalidate that invariant.
     pub(crate) nodes: Box<Slab<Node>>,
 
-    /// The flattened tree of node ids
-    pub(crate) index_map: Vec<usize>,
+    /// The flattened tree of node ids to their index
+    pub(crate) index_map: IndexMap<usize, usize>,
 
     // Stylo
     /// The Stylo engine
@@ -225,7 +226,7 @@ impl BaseDocument {
             id,
             guard,
             nodes,
-            index_map: Vec::new(),
+            index_map: IndexMap::new(),
             stylist,
             snapshots,
             nodes_to_id,
@@ -242,6 +243,7 @@ impl BaseDocument {
             focus_node_id: None,
             active_node_id: None,
             mousedown_node_id: None,
+            selection: Selection::default(),
             is_animating: false,
             changed_nodes: HashSet::new(),
             controls_to_form: HashMap::new(),
@@ -1156,7 +1158,11 @@ impl BaseDocument {
 
     pub(crate) fn make_index_map(&mut self) {
         self.index_map.clear();
-        TreeTraverser::new(self).collect_into(&mut self.index_map);
+        self.index_map.extend(
+            TreeTraverser::new(&*self.nodes)
+                .enumerate()
+                .map(|(index, node_id)| (node_id, index)),
+        );
     }
 }
 

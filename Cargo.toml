@@ -87,11 +87,11 @@ color = "0.3"
 peniko = "0.4"
 kurbo = "0.11"
 parley = { version = "0.5", default-features = false, features = ["std"] }
-skrifa = { version = "0.31" } # Should match parley version
+skrifa = { version = "0.31" }                                              # Should match parley version
 wgpu = "24"
 softbuffer = "0.4"
 pixels = "0.15"
-vello = { version = "0.5", features = [ "wgpu" ] }
+vello = { version = "0.5", features = ["wgpu"] }
 vello_cpu = { version = "0.0.1" }
 usvg = "0.45.1"
 
@@ -133,6 +133,7 @@ smol_str = "0.2"
 bitflags = "2.8.0"
 bytemuck = "1"
 fastrand = "2.3.0"
+indexmap = "2.10.0"
 
 [profile.production]
 inherits = "release"
