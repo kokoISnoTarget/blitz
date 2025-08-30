@@ -767,7 +767,6 @@ dependencies = [
  "fastrand",
  "html-escape",
  "image",
- "indexmap",
  "keyboard-types",
  "markup5ever",
  "objc2 0.6.2",

@@ -4,7 +4,7 @@ use crate::layout::construct::collect_layout_children;
 use crate::mutator::ViewportMut;
 use crate::net::{Resource, StylesheetLoader};
 use crate::node::{ImageData, NodeFlags, RasterImageData, SpecialElementData, Status, TextBrush};
-use crate::range::Selection;
+use crate::selection::Selection;
 use crate::stylo_to_cursor_icon::stylo_to_cursor_icon;
 use crate::traversal::TreeTraverser;
 use crate::url::DocumentUrl;
@@ -19,8 +19,8 @@ use blitz_traits::navigation::{DummyNavigationProvider, NavigationProvider};
 use blitz_traits::net::{DummyNetProvider, NetProvider, SharedProvider};
 use blitz_traits::shell::{ColorScheme, DummyShellProvider, ShellProvider, Viewport};
 use cursor_icon::CursorIcon;
-use indexmap::IndexMap;
 use debug_timer::debug_timer;
+use indexmap::IndexMap;
 use markup5ever::local_name;
 use parley::FontContext;
 use peniko::{Blob, kurbo};
@@ -99,8 +99,8 @@ pub struct BaseDocument {
     /// There is no way to create the tree - publicly or privately - that would invalidate that invariant.
     pub(crate) nodes: Box<Slab<Node>>,
 
-    /// The flattened tree of node ids to their index
-    pub(crate) index_map: IndexMap<usize, usize>,
+    /// A map from node indices to node ids
+    pub(crate) index_to_nodeid: Vec<usize>,
 
     // Stylo
     /// The Stylo engine
@@ -226,7 +226,7 @@ impl BaseDocument {
             id,
             guard,
             nodes,
-            index_map: IndexMap::new(),
+            index_to_nodeid: Vec::new(),
             stylist,
             snapshots,
             nodes_to_id,
@@ -278,7 +278,7 @@ impl BaseDocument {
             ..Default::default()
         };
         *doc.root_node().stylo_element_data.borrow_mut() = Some(stylo_element_data);
-        doc.make_index_map();
+        doc.make_index_mappings();
         doc
     }
 
@@ -1156,13 +1156,13 @@ impl BaseDocument {
         })
     }
 
-    pub(crate) fn make_index_map(&mut self) {
-        self.index_map.clear();
-        self.index_map.extend(
-            TreeTraverser::new(&*self.nodes)
-                .enumerate()
-                .map(|(index, node_id)| (node_id, index)),
-        );
+    pub(crate) fn make_index_mappings(&mut self) {
+        self.index_to_nodeid.clear();
+
+        for (index, node_id) in TreeTraverser::new(&self.nodes).enumerate() {
+            index_to_nodeid.push(node_id);
+            self.nodes[node_id].absolute_position = index;
+        }
     }
 }
 

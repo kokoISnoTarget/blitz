@@ -473,7 +473,7 @@ impl DocumentMutator<'_> {
 
 impl<'doc> DocumentMutator<'doc> {
     pub fn flush(&mut self) {
-        self.doc.make_index_map();
+        self.doc.make_index_mappings();
 
         if self.recompute_is_animating {
             self.doc.is_animating = self.doc.compute_is_animating();

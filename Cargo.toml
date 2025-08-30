@@ -1,26 +1,26 @@
 [workspace]
 members = [
-  "packages/anyrender",
-  "packages/anyrender_vello",
-  "packages/anyrender_vello_cpu",
-  "packages/anyrender_svg",
-  "packages/debug_timer",
-  "packages/blitz-traits",
-  "packages/blitz-dom",
-  "packages/blitz-html",
-  "packages/blitz-net",
-  "packages/blitz-paint",
-  "packages/blitz-shell",
-  "packages/blitz",
-  "packages/mini-dxn",
-  "packages/stylo_taffy",
-  "apps/readme",
-  "apps/bump",
-  "wpt/runner",
-  "examples/counter",
-  "examples/todomvc",
-  "examples/wgpu_texture",
-  "examples/anyrender",
+    "packages/anyrender",
+    "packages/anyrender_vello",
+    "packages/anyrender_vello_cpu",
+    "packages/anyrender_svg",
+    "packages/debug_timer",
+    "packages/blitz-traits",
+    "packages/blitz-dom",
+    "packages/blitz-html",
+    "packages/blitz-net",
+    "packages/blitz-paint",
+    "packages/blitz-shell",
+    "packages/blitz",
+    "packages/mini-dxn",
+    "packages/stylo_taffy",
+    "apps/readme",
+    "apps/bump",
+    "wpt/runner",
+    "examples/counter",
+    "examples/todomvc",
+    "examples/wgpu_texture",
+    "examples/anyrender",
 ]
 exclude = ["sites"]
 resolver = "2"
@@ -64,8 +64,8 @@ cssparser = { version = "0.35" }
 
 # HTML5ever dependencies
 markup5ever = "0.35" # needs to match stylo web_atoms version
-html5ever = "0.35" # needs to match stylo web_atoms version
-xml5ever = "0.35" # needs to match stylo web_atoms version
+html5ever = "0.35"   # needs to match stylo web_atoms version
+xml5ever = "0.35"    # needs to match stylo web_atoms version
 
 # Other Servo dependencies
 euclid = "0.22"
@@ -133,7 +133,6 @@ smol_str = "0.2"
 bitflags = "2.8.0"
 bytemuck = "1"
 fastrand = "2.3.0"
-indexmap = "2.10.0"
 
 [profile.production]
 inherits = "release"

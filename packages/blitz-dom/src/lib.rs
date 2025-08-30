@@ -59,7 +59,7 @@ pub mod util;
 
 #[cfg(feature = "accessibility")]
 mod accessibility;
-mod range;
+mod selection;
 
 pub use config::DocumentConfig;
 pub use document::{BaseDocument, Document};
