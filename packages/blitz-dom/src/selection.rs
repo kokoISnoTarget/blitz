@@ -1,43 +1,40 @@
+/**
+ *
+ */
 use std::collections::{HashMap, HashSet};
 
-use crate::{BaseDocument, Node, node::NodeKind};
+use usvg::Text;
+
+use crate::{
+    BaseDocument, Node,
+    node::{self, NodeKind},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TextPosition {
     pub node_id: usize,
+    /// The offset within the node.
+    /// For text nodes this is the nth character.
+    /// For element nodes this is the nth child.
     pub offset: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Selection {
+    /// The position where the selection starts.
     pub anchor: TextPosition,
+    /// The position where the selection currently ends.
     pub focus: TextPosition,
     pub direction: Direction,
 
+    /// The index of the first node in the selection.
     pub resolved_start_index: usize,
-    pub resolved_start_offset: usize,
+    /// The offset to the start of the selection within the first node.
+    pub resolved_start_text_offset: usize,
+    /// The index of the last node in the selection.
     pub resolved_end_index: usize,
-    pub resolved_end_offset: usize,
-}
-impl Selection {
-    fn match_position(&self, position: usize) -> Option<SelectionMatch> {
-        let Selection {
-            resolved_start_index,
-            resolved_end_index,
-            ..
-        } = self;
-        if resolved_start_index <= position && position <= resolved_end_index {
-            Some(SelectionMatch::from)
-        } else {
-            None
-        }
-    }
-}
-struct SelectionResolver<'a>(&'a Selection);
-impl SelectionResolver<'_> {
-    fn new(selection: &Selection) -> Self {
-        Self(selection)
-    }
+    /// The offset to the end of the selection within the last node.
+    pub resolved_end_text_offset: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -49,25 +46,41 @@ pub enum Direction {
 }
 
 impl BaseDocument {
-    fn resolve_selection(&mut self) {
+    pub(crate) fn resolve_selection(&mut self) {
         let Selection {
             anchor,
             focus,
             direction,
             resolved_start_index,
-            resolved_start_offset,
+            resolved_start_text_offset,
             resolved_end_index,
-            resolved_end_offset,
+            resolved_end_text_offset,
         } = &mut self.selection;
 
-        *resolved_start_index = self.nodeid_to_index[&anchor.node_id];
-        *resolved_end_index = self.nodeid_to_index[&focus.node_id];
-        *resolved_start_offset = anchor.offset;
-        *resolved_end_offset = focus.offset;
+        (*resolved_start_index, *resolved_start_text_offset) = resolve_node(document, anchor);
+        (*resolved_end_index, *resolved_end_text_offset) = resolve_node(document, focus);
 
         if *resolved_start_index > *resolved_end_index {
             std::mem::swap(resolved_start_index, resolved_end_index);
             std::mem::swap(resolved_start_offset, resolved_end_offset);
+        }
+
+        /// Converts the text_position to an node index and text offset.
+        fn resolve_node(
+            document: &mut BaseDocument,
+            text_position: TextPosition,
+        ) -> (usize, usize) {
+            let node = document.get_node(text_position.node_id).unwrap();
+
+            match node.kind {
+                NodeKind::Text => (node.layout_index, text_position.offset),
+                _ => {
+                    let child_node_id = node.children.get(text_position.offset).unwrap();
+                    let child_node = document.get_node(child_node_id).unwrap();
+                    let child_index = child_node.layout_index;
+                    (child_index, 0)
+                }
+            }
         }
     }
 
@@ -79,41 +92,32 @@ impl BaseDocument {
             resolved_end_index,
             ..
         } = self.selection;
-        let index = self.get_node(node_id).map(|node| node.order())
+        let Some(index) = self.get_node(node_id).map(|node| node.layout_index) else {
+            return false;
+        };
         resolved_start_index <= index && index <= resolved_end_index
     }
 
-}
+    fn get_nodes_in_range(&self, start_index: usize, end_index: usize) -> &[usize] {
+        &self.index_to_nodeid[start_index..=end_index]
+    }
 
-pub(crate) enum SelectionMatch {
-    Open(usize),
-    Close(usize),
-    Both(usize, usize),
-    Full,
-    None,
-}
-
-impl SelectionMatcher {
-    pub(crate) fn match_node(&self, node_id: usize) -> SelectionMatch {
+    pub fn get_selected_text(&self) -> String {
         let Selection {
             resolved_start_index,
+            resolved_start_text_offset,
             resolved_end_index,
-            resolved_start_offset,
-            resolved_end_offset,
+            resolved_end_text_offset,
             ..
         } = self.selection;
-        let index = self.nodeid_to_index[&node_id];
+        //FIXME: Offset of first and last node need to be accounted for.
 
-        if index < resolved_start_index || index > resolved_end_index {
-            SelectionMatch::None
-        } else if index == resolved_start_index && index == resolved_end_index {
-            SelectionMatch::Both(resolved_start_offset, resolved_end_offset)
-        } else if index == resolved_start_index {
-            SelectionMatch::Open(resolved_start_offset)
-        } else if index == resolved_end_index {
-            SelectionMatch::Close(resolved_end_offset)
-        } else {
-            SelectionMatch::Full
-        }
+        let nodes = self.get_nodes_in_range(*resolved_start_index, *resolved_end_index);
+        nodes
+            .iter()
+            .filter_map(|node_id| self.get_node(*node_id))
+            .filter_map(Node::text_data)
+            .map(|text| text.content.as_str())
+            .collect::<String>()
     }
 }

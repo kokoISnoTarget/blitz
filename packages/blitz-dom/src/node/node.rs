@@ -87,6 +87,10 @@ pub struct Node {
     /// The same as layout_children, but sorted by z-index
     pub paint_children: RefCell<Option<Vec<usize>>>,
 
+    /// Our index into the layout hierarchy
+    /// - Safety: This index is not persistent and may change when the layout hierarchy is modified.
+    pub(crate) layout_index: usize,
+
     // Flags
     pub flags: NodeFlags,
 
@@ -131,6 +135,8 @@ impl Node {
             layout_parent: Cell::new(None),
             layout_children: RefCell::new(None),
             paint_children: RefCell::new(None),
+
+            layout_index: 0,
 
             flags: NodeFlags::empty(),
             data,

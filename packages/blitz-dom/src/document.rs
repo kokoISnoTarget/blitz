@@ -1161,7 +1161,7 @@ impl BaseDocument {
 
         for (index, node_id) in TreeTraverser::new(&self.nodes).enumerate() {
             index_to_nodeid.push(node_id);
-            self.nodes[node_id].absolute_position = index;
+            self.nodes[node_id].layout_index = index;
         }
     }
 }
