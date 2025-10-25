@@ -405,6 +405,14 @@ impl ElementCx<'_> {
                     panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                 });
 
+            crate::text::fill_selection(
+                self.scale,
+                scene,
+                text_layout.layout,
+                self.context.dom,
+                pos,
+            );
+
             // Render text
             crate::text::stroke_text(
                 self.scale,

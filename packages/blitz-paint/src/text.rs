@@ -1,7 +1,7 @@
 use anyrender::PaintScene;
 use blitz_dom::{BaseDocument, node::TextBrush, util::ToColorColor};
 use kurbo::{Affine, Point, Stroke};
-use parley::{Line, PositionedLayoutItem};
+use parley::{Layout, Line, PositionedLayoutItem};
 use peniko::Fill;
 use style::values::computed::TextDecorationLine;
 
@@ -96,4 +96,23 @@ pub(crate) fn stroke_text<'a>(
             }
         }
     }
+}
+
+pub(crate) fn fill_selection(
+    scale: f64,
+    scene: &mut PaintScene,
+    layout: &Layout<TextBrush>,
+    doc: &BaseDocument,
+    pos: Point,
+) {
+    let transform = Affine::translate((pos.x * scale, pos.y * scale));
+    doc.selection_geometry(layout, |rect| {
+        scene.fill(
+            Fill::NonZero,
+            transform,
+            color::palette::css::STEEL_BLUE,
+            None,
+            &rect,
+        );
+    });
 }

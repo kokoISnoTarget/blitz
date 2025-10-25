@@ -55,6 +55,21 @@ pub(crate) fn handle_mousemove(
             .extend_selection_to_point(x as f32, y as f32);
 
         changed = true;
+    } else {
+        if buttons == MouseEventButtons::None {
+            return changed;
+        }
+
+        let content_box_offset = taffy::Point {
+            x: node.final_layout.padding.left + node.final_layout.border.left,
+            y: node.final_layout.padding.top + node.final_layout.border.top,
+        };
+
+        let x = (hit.x - content_box_offset.x) as f64 * doc.viewport.scale_f64();
+        let y = (hit.y - content_box_offset.y) as f64 * doc.viewport.scale_f64();
+
+        doc.selection_driver().mouse_move(hit.node_id, x, y);
+        changed = true;
     }
 
     changed
@@ -92,6 +107,15 @@ pub(crate) fn handle_mousedown(doc: &mut BaseDocument, target: usize, x: f32, y:
             .move_to_point(x as f32, y as f32);
 
         doc.set_focus_to(hit.node_id);
+    } else {
+        let content_box_offset = taffy::Point {
+            x: node.final_layout.padding.left + node.final_layout.border.left,
+            y: node.final_layout.padding.top + node.final_layout.border.top,
+        };
+        let x = (hit.x - content_box_offset.x) as f64 * doc.viewport.scale_f64();
+        let y = (hit.y - content_box_offset.y) as f64 * doc.viewport.scale_f64();
+
+        doc.selection_driver().mouse_down(hit.node_id, x, y);
     }
 }
 

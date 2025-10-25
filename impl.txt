@@ -1,0 +1,19 @@
+impl plan:
+ -> add selection geometry to TextBrush if selection is active for text node
+ -> set this geometry in blitz-dom/layout/construct.rs as well as colors
+ -> use the geometry in blitz-paint/text.rs
+
+ -> make actions for selection
+   -> mouse drag
+   -> keyboard?
+     -> arrow keys
+     -> shift + arrow keys
+
+  -> copy is an simple read all text nodes in between selection anchor and focus
+
+???
+  -> is an simple range check cheap enough to be done on every text node
+
+  -> maybe store the index on the node itself instead of the hashmap
+    -> this may have a caching problem?
+    -> this could be faster than an hash
