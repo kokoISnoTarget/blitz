@@ -1,18 +1,18 @@
 //! An implementation for Html5ever's sink trait, allowing us to parse HTML into a DOM.
 
+use blitz_dom::node::{Attribute, ShadowRootInit, ShadowRootMode, SlotAssignmentMode};
+use blitz_dom::{DocumentMutator, HtmlParserProvider, local_name};
 use html5ever::ParseOpts;
 use html5ever::tokenizer::TokenizerOpts;
 use html5ever::tree_builder::TreeBuilderOpts;
-use std::borrow::Cow;
-use std::cell::{Cell, Ref, RefCell, RefMut};
-
-use blitz_dom::node::Attribute;
-use blitz_dom::{DocumentMutator, HtmlParserProvider};
 use html5ever::{
     QualName,
     tendril::{StrTendril, TendrilSink},
     tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink},
 };
+use std::borrow::Cow;
+use std::cell::{Cell, Ref, RefCell, RefMut};
+use std::ops::Deref;
 
 /// Convert an html5ever Attribute which uses tendril for its value to a blitz Attribute
 /// which uses String.
@@ -250,8 +250,14 @@ impl<'m, 'doc> TreeSink for DocumentHtmlParser<'m, 'doc> {
     }
 
     fn get_template_contents(&self, target: &Self::Handle) -> Self::Handle {
-        // TODO: implement templates properly. This should allow to function like regular elements.
-        *target
+        self.mutr()
+            .doc
+            .get_node(*target)
+            .expect("Node should exists!")
+            .element_data()
+            .expect("Node should be an element!")
+            .template_contents
+            .expect("Node should be an template element!")
     }
 
     fn same_node(&self, x: &Self::Handle, y: &Self::Handle) -> bool {
@@ -278,6 +284,72 @@ impl<'m, 'doc> TreeSink for DocumentHtmlParser<'m, 'doc> {
 
     fn clone_subtree(&self, target: &Self::Handle) -> Self::Handle {
         self.mutr().deep_clone_node(*target)
+    }
+
+    fn attach_declarative_shadow(
+        &self,
+        host_id: &Self::Handle,
+        template_id: &Self::Handle,
+        attrs: &[html5ever::Attribute],
+    ) -> bool {
+        let mut mode = ShadowRootMode::Open;
+        let mut clonable = false;
+        let mut delegates_focus = false;
+        let mut serializable = false;
+
+        for html5ever::Attribute { name, value } in attrs {
+            match name.local {
+                local_name!(shadowrootmode) => {
+                    mode = match value.deref() {
+                        "open" => ShadowRootMode::Open,
+                        "closed" => ShadowRootMode::Closed,
+                        _ => ShadowRootMode::Open,
+                    }
+                }
+                local_name!(shadowrootclonable) => {
+                    clonable = true;
+                }
+                local_name!(shadowrootdelegatesfocus) => {
+                    delegates_focus = true;
+                }
+                local_name!(shadowrootserializable) => {
+                    serializable = true;
+                }
+                _ => {}
+            }
+        }
+
+        let maybe_shadow_root = self.mutr().attach_shadow(
+            *host_id,
+            ShadowRootInit {
+                mode,
+                clonable,
+                delegates_focus,
+                reference_target: None,
+                serializable,
+                slot_assignment: SlotAssignmentMode::Named,
+            },
+        );
+        let Ok(shadow_root_id) = maybe_shadow_root else {
+            #[cfg(feature = "tracing")]
+            tracing::error!(error = ?maybe_shadow_root.unwrap_err(), "Could not attach declarative shadow");
+            return false;
+        };
+
+        self.mutr()
+            .doc
+            .get_node_mut(shadow_root_id)
+            .and_then(|node| node.shadow_root_data_mut())
+            .expect("Shadow should exist")
+            .declarative = true;
+
+        self.mutr()
+            .doc
+            .get_node_mut(*template_id)
+            .and_then(|node| node.element_data_mut())
+            .expect("Template should exist")
+            .template_contents = Some(shadow_root_id);
+        true
     }
 }
 
