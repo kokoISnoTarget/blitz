@@ -5,14 +5,19 @@ use std::ops::{Deref, DerefMut};
 use crate::document::make_device;
 use crate::layout::damage::ALL_DAMAGE;
 use crate::net::{ImageHandler, ResourceHandler, StylesheetHandler};
-use crate::node::{CanvasData, NodeFlags, SpecialElementData};
+use crate::node::{
+    CanvasData, NodeFlags, ShadowRootData, ShadowRootInit, ShadowRootNotSupportedError,
+    SpecialElementData, valid_shadow_host_name,
+};
 use crate::util::ImageType;
 use crate::{
-    Attribute, BaseDocument, Document, ElementData, Node, NodeData, QualName, local_name, qual_name,
+    Attribute, BaseDocument, Document, ElementData, Node, NodeData, QualName, local_name, ns,
+    qual_name,
 };
 use blitz_traits::net::Request;
 use blitz_traits::shell::Viewport;
 use style::Atom;
+use style::author_styles::AuthorStyles;
 use style::invalidation::element::restyle_hints::RestyleHint;
 use style::stylesheets::OriginSet;
 
@@ -526,6 +531,65 @@ impl DocumentMutator<'_> {
     pub fn replace_node_with(&mut self, anchor_node_id: usize, new_node_ids: &[usize]) {
         self.insert_nodes_before(anchor_node_id, new_node_ids);
         self.remove_node(anchor_node_id);
+    }
+
+    pub fn attach_shadow(
+        &mut self,
+        host_id: usize,
+        init: ShadowRootInit,
+    ) -> Result<usize, ShadowRootNotSupportedError> {
+        let host = &self.doc.nodes[host_id];
+        let Some(host_element) = host.element_data() else {
+            return Err(ShadowRootNotSupportedError::CantHaveShadowAttached);
+        };
+        if host_element.name.ns != ns!(html) || !valid_shadow_host_name(&host_element.name.local) {
+            return Err(ShadowRootNotSupportedError::CantHaveShadowAttached);
+        }
+
+        // TODO: Custom elements
+
+        if let Some(current_shadow_root_id) = host_element.shadow_root {
+            let current_shadow_root = self.doc.nodes[current_shadow_root_id]
+                .shadow_root_data()
+                .expect("Should be shadow root");
+
+            if !current_shadow_root.declarative {
+                return Err(ShadowRootNotSupportedError::HasNonDeclarativeShadow);
+            }
+            if current_shadow_root.mode != init.mode {
+                return Err(ShadowRootNotSupportedError::ModeDoesNotMatch);
+            }
+            self.remove_and_drop_all_children(current_shadow_root_id);
+            self.doc.nodes[current_shadow_root_id]
+                .shadow_root_data_mut()
+                .expect("Should be shadow root")
+                .declarative = false;
+        }
+
+        let shadow_root_id = self.doc.create_node(NodeData::ShadowRoot(ShadowRootData {
+            host: host_id,
+            mode: init.mode,
+            delegates_focus: init.delegates_focus,
+
+            slot_assignment_mode: init.slot_assignment,
+            clonable: init.clonable,
+            serializable: init.serializable,
+            declarative: false,
+            styles: AuthorStyles::new(),
+        }));
+        *self.doc.nodes[shadow_root_id]
+            .stylo_element_data
+            .borrow_mut() = Some(style::data::ElementData {
+            damage: ALL_DAMAGE,
+            ..Default::default()
+        });
+
+        self.doc.nodes[host_id]
+            .element_data_mut()
+            .expect("Should be an element")
+            .shadow_root = Some(shadow_root_id);
+
+        Ok(shadow_root_id)
     }
 }
 
