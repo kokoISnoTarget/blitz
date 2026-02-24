@@ -76,13 +76,13 @@ pub fn walk_tree(indent: usize, node: &Node) {
             for attr in data.attrs.iter() {
                 print!(" {}=\"{}\"", attr.name.local, attr.value);
             }
-            if !node.children.is_empty() {
+            if !node.children.is_empty() || data.shadow_root.is_some() {
                 println!(">");
             } else {
                 println!("/>");
             }
         }
-        NodeData::ShadowRoot(_) => println!("{id} ShadowRoot"),
+        NodeData::ShadowRoot(data) => println!("#shadow-root {id} mode={:?}", data.mode),
         // NodeData::Doctype {
         //     ref name,
         //     ref public_id,
@@ -91,9 +91,14 @@ pub fn walk_tree(indent: usize, node: &Node) {
         // NodeData::ProcessingInstruction { .. } => unreachable!(),
     }
 
-    if !node.children.is_empty() {
+    let shadow_root = node.element_data().and_then(|data| data.shadow_root);
+    if !node.children.is_empty() || shadow_root.is_some() {
         for child_id in node.children.iter() {
             walk_tree(indent + 2, node.with(*child_id));
+        }
+
+        if let Some(shadow_root_id) = shadow_root {
+            walk_tree(indent + 2, node.with(shadow_root_id))
         }
 
         if let NodeData::Element(data) = &node.data {

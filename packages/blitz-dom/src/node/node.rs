@@ -712,6 +712,10 @@ impl Node {
         }
     }
 
+    pub fn shadow_root_id(&self) -> Option<usize> {
+        self.element_data().and_then(|data| data.shadow_root)
+    }
+
     pub fn node_debug_str(&self) -> String {
         let mut s = String::new();
 

@@ -30,7 +30,13 @@ impl Iterator for TreeTraverser<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let id = self.stack.pop()?;
         let node = self.doc.get_node(id)?;
-        self.stack.extend(node.children.iter().rev());
+
+        if let Some(shadow_root_id) = node.shadow_root_id() {
+            self.stack.push(shadow_root_id);
+        } else {
+            self.stack.extend(node.children.iter().rev());
+        }
+
         Some(id)
     }
 }

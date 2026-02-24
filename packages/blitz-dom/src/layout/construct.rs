@@ -103,6 +103,15 @@ pub(crate) fn collect_layout_children(
     flush_pseudo_elements(doc, container_node_id);
 
     if let Some(el) = doc.nodes[container_node_id].data.downcast_element() {
+        if let Some(shadow_root_id) = el.shadow_root {
+            let children = std::mem::take(&mut doc.nodes[shadow_root_id].children);
+
+            for child_id in children.iter().copied() {
+                layout_children.push(child_id);
+            }
+            doc.nodes[shadow_root_id].children = children;
+            return;
+        }
         // Handle text inputs
         let tag_name = el.name.local.as_ref();
         if matches!(tag_name, "input" | "textarea") {
