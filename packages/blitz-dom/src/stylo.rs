@@ -31,6 +31,7 @@ use style::properties::{Importance, PropertyDeclaration};
 use style::rule_tree::CascadeLevel;
 use style::selector_parser::PseudoElement;
 use style::selector_parser::RestyleDamage;
+use style::stylesheets::StylesheetInDocument;
 use style::stylesheets::layer_rule::LayerOrder;
 use style::stylesheets::scope_rule::ImplicitScopeRoot;
 use style::values::AtomString;
@@ -201,14 +202,18 @@ impl<'a> TShadowRoot for BlitzNode<'a> {
     }
 
     fn host(&self) -> <Self::ConcreteNode as TNode>::ConcreteElement {
-        todo!("Shadow roots not implemented")
+        match &self.data {
+            NodeData::ShadowRoot(shadow_root) => self.with(shadow_root.host),
+            _ => unreachable!(),
+        }
     }
 
     fn style_data<'b>(&self) -> Option<&'b style::stylist::CascadeData>
     where
         Self: 'b,
     {
-        todo!("Shadow roots not implemented")
+        self.shadow_root_data()
+            .map(|data| data.styles.data.as_ref())
     }
 }
 
@@ -246,12 +251,15 @@ impl<'a> TNode for BlitzNode<'a> {
         true
     }
 
-    // I think this is the same as parent_node only in the cases when the direct parent is not a real element, forcing us
-    // to travel upwards
-    //
-    // For the sake of this demo, we're just going to return the parent node ann
+    // TODO: when implementing slots don't forget this.
     fn traversal_parent(&self) -> Option<Self::ConcreteElement> {
-        self.parent_node().and_then(|node| node.as_element())
+        self.parent_node().and_then(|node| {
+            if let Some(shadow_node) = node.shadow_root_data() {
+                self.with(shadow_node.host).as_element()
+            } else {
+                node.as_element()
+            }
+        })
     }
 
     fn opaque(&self) -> OpaqueNode {
@@ -277,8 +285,10 @@ impl<'a> TNode for BlitzNode<'a> {
     }
 
     fn as_shadow_root(&self) -> Option<Self::ConcreteShadowRoot> {
-        // TODO: implement shadow DOM
-        None
+        match self.data {
+            NodeData::ShadowRoot(_) => Some(self),
+            _ => None,
+        }
     }
 }
 
@@ -349,11 +359,13 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn parent_node_is_shadow_root(&self) -> bool {
-        false
+        self.parent_node()
+            .and_then(|parent| parent.shadow_root_data())
+            .is_some()
     }
 
     fn containing_shadow_host(&self) -> Option<Self> {
-        None
+        self.shadow_root_data().map(|data| self.with(data.host))
     }
 
     fn is_pseudo_element(&self) -> bool {
@@ -624,20 +636,30 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn implicit_scope_for_sheet_in_shadow_root(
-        _opaque_host: OpaqueElement,
-        _sheet_index: usize,
         opaque_host: OpaqueElement,
+        sheet_index: usize,
     ) -> Option<ImplicitScopeRoot> {
-        // We cannot currently implement this as we are using the NodeId as the OpaqueElement,
-        // and need a reference to the Slab to convert it back into an Element
-        //
-        // Luckily it is only needed for shadow dom.
-        todo!();
         let global_node_id = GlobalNodeId::unpack(opaque_host);
         let node = global_node_id.get_node()?;
+        let shadow_root_id = node.element_data()?.shadow_root?;
+        let shadow_root = node.with(shadow_root_id);
+
+        shadow_root
+            .shadow_root_data()?
+            .styles
+            .stylesheets
+            .get(sheet_index)?
+            .implicit_scope_root()
     }
 
     fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
+        if let Some(shadow_root_id) = self.element_data().and_then(|data| data.shadow_root) {
+            return LayoutIterator(Traverser {
+                parent: self.with(shadow_root_id),
+                child_index: 0,
+            });
+        }
+
         LayoutIterator(Traverser {
             // dom: self.tree(),
             parent: self,
@@ -833,10 +855,20 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn shadow_root(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
-        None
+        self.element_data()
+            .and_then(|el| el.shadow_root)
+            .map(|root| self.with(root))
     }
 
     fn containing_shadow(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
+        let mut node = *self;
+
+        while let Some(parent) = node.parent_node() {
+            if parent.shadow_root_data().is_some() {
+                return Some(parent);
+            }
+            node = parent;
+        }
         None
     }
 
