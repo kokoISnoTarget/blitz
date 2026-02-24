@@ -288,19 +288,60 @@ impl AttributeProvider for BlitzNode<'_> {
     }
 }
 
+struct GlobalNodeId {
+    doc_id: usize,
+    node_id: usize,
+}
+
+impl GlobalNodeId {
+    pub fn pack(doc_id: usize, node_id: usize) -> OpaqueElement {
+        #[cfg(not(target_pointer_width = "64"))]
+        compile_error!(
+            "Opaque Elements are not implemented for platforms other than 64 bit ptr width"
+        );
+
+        const MAX_DOC_ID: usize = (1 << 16) - 1;
+        const MAX_NODE_ID: usize = (1 << 48) - 2;
+
+        assert!(
+            doc_id <= MAX_DOC_ID,
+            "doc_id ({}) exceeds the maximum allowed 16-bit limit ({})",
+            doc_id,
+            MAX_DOC_ID
+        );
+        assert!(
+            node_id <= MAX_NODE_ID,
+            "node_id ({}) exceeds the maximum safe 48-bit limit ({})",
+            node_id,
+            MAX_NODE_ID
+        );
+
+        // Add 1 to ensure the pointer is never null.
+        let global_node_id = ((doc_id << 48 | node_id) + 1) as *mut ();
+        OpaqueElement::from_non_null_ptr(NonNull::new(global_node_id).unwrap())
+    }
+
+    pub fn unpack(element: OpaqueElement) -> GlobalNodeId {
+        let ptr_val = unsafe { element.as_const_ptr::<()>() } as usize;
+
+        let raw_val = ptr_val - 1;
+
+        let doc_id = raw_val >> 48;
+        let node_id = raw_val & ((1 << 48) - 1);
+
+        GlobalNodeId { doc_id, node_id }
+    }
+
+    pub(crate) fn get_node(&self) -> Option<BlitzNode<'_>> {
+        crate::document::get_node(self.doc_id, self.node_id)
+    }
+}
+
 impl selectors::Element for BlitzNode<'_> {
     type Impl = SelectorImpl;
 
     fn opaque(&self) -> selectors::OpaqueElement {
-        // This correctly uses a unique id for the OpaqueElement (unlike using a pointer to the "slot")
-        // However, it makes it impossible for us to "rehydrate" the OpaqueElement back into an actual Element
-        // which is required to implement the `implicit_scope_for_sheet_in_shadow_root` method below
-        //
-        // We should see if selectors will accept a PR that allows us to use 128bits for the OpaqueElement. Or
-        // find some other solution that will enable "rehydration". This is required to enable and use the
-        // Shadow DOM functionality in Stylo.
-        let non_null = NonNull::new((self.id + 1) as *mut ()).unwrap();
-        OpaqueElement::from_non_null_ptr(non_null)
+        GlobalNodeId::pack(self.doc_id, self.id)
     }
 
     fn parent_element(&self) -> Option<Self> {
@@ -585,12 +626,15 @@ impl<'a> TElement for BlitzNode<'a> {
     fn implicit_scope_for_sheet_in_shadow_root(
         _opaque_host: OpaqueElement,
         _sheet_index: usize,
+        opaque_host: OpaqueElement,
     ) -> Option<ImplicitScopeRoot> {
         // We cannot currently implement this as we are using the NodeId as the OpaqueElement,
         // and need a reference to the Slab to convert it back into an Element
         //
         // Luckily it is only needed for shadow dom.
         todo!();
+        let global_node_id = GlobalNodeId::unpack(opaque_host);
+        let node = global_node_id.get_node()?;
     }
 
     fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
