@@ -345,6 +345,9 @@ impl<'dom> BlitzDomPainter<'dom> {
             NodeData::Document => {}
             // NodeData::Doctype => {}
             NodeData::Comment => {} // NodeData::ProcessingInstruction { .. } => {}
+            NodeData::ShadowRoot(_) => {
+                todo!()
+            }
         }
     }
 

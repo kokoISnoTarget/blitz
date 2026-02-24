@@ -81,12 +81,14 @@ pub fn walk_tree(indent: usize, node: &Node) {
             } else {
                 println!("/>");
             }
-        } // NodeData::Doctype {
-          //     ref name,
-          //     ref public_id,
-          //     ref system_id,
-          // } => println!("<!DOCTYPE {} \"{}\" \"{}\">", name, public_id, system_id),
-          // NodeData::ProcessingInstruction { .. } => unreachable!(),
+        }
+        NodeData::ShadowRoot(_) => println!("{id} ShadowRoot"),
+        // NodeData::Doctype {
+        //     ref name,
+        //     ref public_id,
+        //     ref system_id,
+        // } => println!("<!DOCTYPE {} \"{}\" \"{}\">", name, public_id, system_id),
+        // NodeData::ProcessingInstruction { .. } => unreachable!(),
     }
 
     if !node.children.is_empty() {

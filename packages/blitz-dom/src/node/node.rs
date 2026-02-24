@@ -30,10 +30,10 @@ use taffy::{
     prelude::{Layout, Style},
 };
 
+use super::{Attribute, ElementData};
 use crate::Document;
 use crate::layout::damage::HoistedPaintChildren;
-
-use super::{Attribute, ElementData};
+use crate::node::shadow_root::ShadowRootData;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayOuter {
@@ -480,6 +480,7 @@ pub enum NodeKind {
     AnonymousBlock,
     Text,
     Comment,
+    ShadowRoot,
 }
 
 /// The different kinds of nodes in the DOM.
@@ -496,6 +497,8 @@ pub enum NodeData {
 
     /// A text node.
     Text(TextNodeData),
+
+    ShadowRoot(ShadowRootData),
 
     /// A comment.
     Comment,
@@ -553,6 +556,7 @@ impl NodeData {
             NodeData::AnonymousBlock(_) => NodeKind::AnonymousBlock,
             NodeData::Text(_) => NodeKind::Text,
             NodeData::Comment => NodeKind::Comment,
+            NodeData::ShadowRoot(_) => NodeKind::ShadowRoot,
         }
     }
 }
@@ -695,6 +699,19 @@ impl Node {
         }
     }
 
+    pub fn shadow_root_data(&self) -> Option<&ShadowRootData> {
+        match self.data {
+            NodeData::ShadowRoot(ref data) => Some(data),
+            _ => None,
+        }
+    }
+    pub fn shadow_root_data_mut(&mut self) -> Option<&mut ShadowRootData> {
+        match self.data {
+            NodeData::ShadowRoot(ref mut data) => Some(data),
+            _ => None,
+        }
+    }
+
     pub fn node_debug_str(&self) -> String {
         let mut s = String::new();
 
@@ -734,6 +751,11 @@ impl Node {
                 }
                 write!(s, "> ({display})")
             } // NodeData::ProcessingInstruction { .. } => write!(s, "ProcessingInstruction"),
+            NodeData::ShadowRoot(shadow_root) => write!(
+                s,
+                "#shadow-root host: {}, mode: {:?}",
+                shadow_root.host, shadow_root.mode
+            ),
         }
         .unwrap();
         s
@@ -794,6 +816,7 @@ impl Node {
                     writer.push('>');
                 }
             }
+            NodeData::ShadowRoot(_) => {}
         }
     }
 

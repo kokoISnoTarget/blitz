@@ -486,6 +486,7 @@ impl PrintTree for BaseDocument {
                 };
                 format!("{} ({})", node.node_debug_str(), display).leak()
             } // NodeData::ProcessingInstruction { .. } => return "PROCESSING INSTRUCTION",
+            NodeData::ShadowRoot(_) => "SHADOW ROOT",
         }
     }
 

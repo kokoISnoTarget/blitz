@@ -65,6 +65,7 @@ pub struct ElementData {
     pub template_contents: Option<usize>,
     // /// Whether the node is a [HTML integration point] (https://html.spec.whatwg.org/multipage/#html-integration-point)
     // pub mathml_annotation_xml_integration_point: bool,
+    pub shadow_root: Option<usize>,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -148,6 +149,7 @@ impl ElementData {
             special_data: SpecialElementData::None,
             template_contents: None,
             background_images: Vec::new(),
+            shadow_root: None,
         };
         data.flush_is_focussable();
         data
