@@ -63,6 +63,34 @@ use url::Url;
 #[cfg(feature = "parallel-construct")]
 use thread_local::ThreadLocal;
 
+thread_local! {
+    static DOCUMENT_NODES: RefCell<HashMap<usize, *mut Slab<Node>>> = RefCell::new(HashMap::new());
+}
+pub(crate) fn get_node<'node>(doc_id: usize, node_id: usize) -> Option<&'node Node> {
+    DOCUMENT_NODES.with_borrow(|dc| {
+        dc.get(&doc_id)
+            .and_then(|nodes| unsafe { nodes.as_ref().and_then(|nodes| nodes.get(node_id)) })
+    })
+}
+fn set_document_nodes(doc_id: usize, nodes: &Box<Slab<Node>>) {
+    DOCUMENT_NODES.with_borrow_mut(|dc| {
+        let ptr = nodes.as_ref() as *const _ as *mut _;
+        let out = dc.insert(doc_id, ptr);
+        if out.is_some() {
+            panic!("removed nodes of some document")
+        }
+    });
+}
+fn unset_document_nodes(doc_id: usize) {
+    DOCUMENT_NODES.with_borrow_mut(|dc| {
+        let out = dc.remove(&doc_id);
+        if out.is_none() {
+            #[cfg(feature = "tracing")]
+            tracing::error!("Document had no global nodes");
+        }
+    });
+}
+
 pub enum DocGuard<'a> {
     Ref(&'a BaseDocument),
     RefCell(std::cell::Ref<'a, BaseDocument>),
@@ -372,6 +400,8 @@ impl BaseDocument {
 
         let (tx, rx) = channel();
 
+        set_document_nodes(id, &nodes);
+
         let mut doc = Self {
             id,
             tx,
@@ -643,9 +673,10 @@ impl BaseDocument {
         let slab_ptr = self.nodes.as_mut() as *mut Slab<Node>;
         let guard = self.guard.clone();
 
+        let doc_id = self.id;
         let entry = self.nodes.vacant_entry();
         let id = entry.key();
-        entry.insert(Node::new(slab_ptr, id, guard, node_data));
+        entry.insert(Node::new(slab_ptr, doc_id, id, guard, node_data));
 
         // Mark the new node as changed.
         self.changed_nodes.insert(id);
@@ -1822,6 +1853,12 @@ impl BaseDocument {
         }
 
         ranges
+    }
+}
+
+impl Drop for BaseDocument {
+    fn drop(&mut self) {
+        unset_document_nodes(self.id)
     }
 }
 

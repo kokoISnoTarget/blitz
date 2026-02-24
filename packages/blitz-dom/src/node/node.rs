@@ -80,6 +80,7 @@ impl NodeFlags {
 pub struct Node {
     // The actual tree we belong to. This is unsafe!!
     tree: *mut Slab<Node>,
+    pub doc_id: usize,
 
     /// Our Id
     pub id: usize,
@@ -132,6 +133,7 @@ unsafe impl Sync for Node {}
 impl Node {
     pub(crate) fn new(
         tree: *mut Slab<Node>,
+        doc_id: usize,
         id: usize,
         guard: SharedRwLock,
         data: NodeData,
@@ -154,6 +156,7 @@ impl Node {
 
         Self {
             tree,
+            doc_id,
 
             id,
             parent: None,
