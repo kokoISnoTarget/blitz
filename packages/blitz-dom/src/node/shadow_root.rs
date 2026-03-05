@@ -21,7 +21,7 @@ pub struct ShadowRootData {
 }
 
 pub struct ShadowRootStylesheet {
-    sheet: Arc<Stylesheet>,
+    pub(crate) sheet: Arc<Stylesheet>,
 }
 
 impl StylesheetInDocument for ShadowRootStylesheet {
@@ -96,6 +96,13 @@ pub struct ShadowRootInit {
     pub serializable: bool,
     /// TODO
     pub slot_assignment: SlotAssignmentMode,
+}
+
+#[derive(Debug, Clone)]
+pub enum UiElement {
+    None,
+    Details,
+    //Custom(&'static str /*stylesheet*/, &'static str /* resource url */),
 }
 
 #[derive(Debug)]

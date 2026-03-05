@@ -5,9 +5,10 @@ use std::ops::{Deref, DerefMut};
 use crate::document::make_device;
 use crate::layout::damage::ALL_DAMAGE;
 use crate::net::{ImageHandler, ResourceHandler, StylesheetHandler};
+use crate::node::element::details::details_stylesheet;
 use crate::node::{
     CanvasData, NodeFlags, ShadowRootData, ShadowRootInit, ShadowRootNotSupportedError,
-    SpecialElementData, valid_shadow_host_name,
+    SpecialElementData, UiElement, valid_shadow_host_name,
 };
 use crate::util::ImageType;
 use crate::{
@@ -35,12 +36,13 @@ pub enum AppendTextErr {
 
 /// Operations that happen almost immediately, but are deferred within a
 /// function for borrow-checker reasons.
-enum SpecialOp {
+pub(crate) enum SpecialOp {
     LoadImage(usize),
     LoadStylesheet(usize),
     UnloadStylesheet(usize),
     LoadCustomPaintSource(usize),
     ProcessButtonInput(usize),
+    ProcessDetails(usize),
 }
 
 pub struct DocumentMutator<'doc> {
@@ -291,6 +293,25 @@ impl DocumentMutator<'_> {
             self.load_custom_paint_src(node_id);
         } else if (tag, attr) == tag_and_attr!("link", "href") {
             self.load_linked_stylesheet(node_id);
+        } else if (tag, attr) == tag_and_attr!("details", "open") {
+            // TODO:
+            // The following attribute change steps, given element, localName, oldValue, value, and namespace, are used for all details elements:
+            //
+            // If namespace is not null, then return.
+            //
+            // If localName is name, then ensure details exclusivity by closing the given element if needed given element.
+            //
+            // If localName is open, then:
+            //
+            // If one of oldValue or value is null and the other is not null, run the following steps, which are known as the details notification task steps, for this details element:
+            //
+            // When the open attribute is toggled several times in succession, the resulting tasks essentially get coalesced so that only one event is fired.
+            //
+            // If oldValue is null, queue a details toggle event task given the details element, "closed", and "open".
+            //
+            // Otherwise, queue a details toggle event task given the details element, "open", and "closed".
+            //
+            // If oldValue is null and value is not null, then ensure details exclusivity by closing other elements if needed given element.
         }
     }
 
@@ -537,13 +558,19 @@ impl DocumentMutator<'_> {
         &mut self,
         host_id: usize,
         init: ShadowRootInit,
+        ui_style: UiElement,
     ) -> Result<usize, ShadowRootNotSupportedError> {
         let host = &self.doc.nodes[host_id];
         let Some(host_element) = host.element_data() else {
             return Err(ShadowRootNotSupportedError::CantHaveShadowAttached);
         };
-        if host_element.name.ns != ns!(html) || !valid_shadow_host_name(&host_element.name.local) {
-            return Err(ShadowRootNotSupportedError::CantHaveShadowAttached);
+
+        if !matches!(ui_style, UiElement::Details) {
+            if host_element.name.ns != ns!(html)
+                || (!valid_shadow_host_name(&host_element.name.local))
+            {
+                return Err(ShadowRootNotSupportedError::CantHaveShadowAttached);
+            }
         }
 
         // TODO: Custom elements
@@ -566,6 +593,17 @@ impl DocumentMutator<'_> {
                 .declarative = false;
         }
 
+        let mut styles = AuthorStyles::new();
+        match ui_style {
+            UiElement::Details => styles.stylesheets.append_stylesheet(
+                None,
+                &Default::default(),
+                details_stylesheet(self.doc.guard().clone()),
+                &self.doc.guard().read(),
+            ),
+            UiElement::None => {}
+        }
+
         let shadow_root_id = self.doc.create_node(NodeData::ShadowRoot(ShadowRootData {
             host: host_id,
             mode: init.mode,
@@ -575,8 +613,9 @@ impl DocumentMutator<'_> {
             clonable: init.clonable,
             serializable: init.serializable,
             declarative: false,
-            styles: AuthorStyles::new(),
+            styles,
         }));
+
         *self.doc.nodes[shadow_root_id]
             .stylo_element_data
             .borrow_mut() = Some(style::data::ElementData {
@@ -638,9 +677,11 @@ impl<'doc> DocumentMutator<'doc> {
                 SpecialOp::UnloadStylesheet(node_id) => self.unload_stylesheet(node_id),
                 SpecialOp::LoadCustomPaintSource(node_id) => self.load_custom_paint_src(node_id),
                 SpecialOp::ProcessButtonInput(node_id) => self.process_button_input(node_id),
+                SpecialOp::ProcessDetails(node_id) => {
+                    crate::node::element::details::create_shadow_tree(self, node_id)
+                }
             }
         }
-
         // Queue is empty, but put Vec back anyway so allocation can be reused.
         self.eager_op_queue = ops;
     }
@@ -677,6 +718,7 @@ impl<'doc> DocumentMutator<'doc> {
                         .push(SpecialOp::ProcessButtonInput(node_id));
                     self.form_nodes.insert(node_id);
                 }
+                "details" => self.eager_op_queue.push(SpecialOp::ProcessDetails(node_id)),
                 _ => {}
             }
 
@@ -745,6 +787,12 @@ impl<'doc> DocumentMutator<'doc> {
                 #[cfg(feature = "file_input")]
                 SpecialElementData::FileInput(_) => {}
                 SpecialElementData::None => {}
+                SpecialElementData::Slot(_) => {
+                    todo!()
+                }
+                SpecialElementData::Details(_) => {
+                    todo!()
+                }
             }
         });
 

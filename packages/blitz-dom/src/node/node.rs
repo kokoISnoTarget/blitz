@@ -96,6 +96,10 @@ pub struct Node {
     pub paint_children: RefCell<Option<Vec<usize>>>,
     pub stacking_context: Option<Box<HoistedPaintChildren>>,
 
+    pub assigned_slot: Option<usize>,
+    pub manual_slot_assignment: Option<usize>,
+    pub name: String,
+
     // Flags
     pub flags: NodeFlags,
 
@@ -165,6 +169,10 @@ impl Node {
             layout_children: RefCell::new(None),
             paint_children: RefCell::new(None),
             stacking_context: None,
+
+            assigned_slot: None,
+            manual_slot_assignment: None,
+            name: String::new(),
 
             flags: NodeFlags::empty(),
             data,

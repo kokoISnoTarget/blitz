@@ -1,7 +1,7 @@
 #![allow(clippy::module_inception)]
 
 mod attributes;
-mod element;
+pub mod element;
 mod node;
 mod shadow_root;
 

@@ -1,6 +1,6 @@
 //! An implementation for Html5ever's sink trait, allowing us to parse HTML into a DOM.
 
-use blitz_dom::node::{Attribute, ShadowRootInit, ShadowRootMode, SlotAssignmentMode};
+use blitz_dom::node::{Attribute, ShadowRootInit, ShadowRootMode, SlotAssignmentMode, UiElement};
 use blitz_dom::{DocumentMutator, HtmlParserProvider, local_name};
 use html5ever::ParseOpts;
 use html5ever::tokenizer::TokenizerOpts;
@@ -329,7 +329,9 @@ impl<'m, 'doc> TreeSink for DocumentHtmlParser<'m, 'doc> {
                 serializable,
                 slot_assignment: SlotAssignmentMode::Named,
             },
+            UiElement::None,
         );
+
         let Ok(shadow_root_id) = maybe_shadow_root else {
             #[cfg(feature = "tracing")]
             tracing::error!(error = ?maybe_shadow_root.unwrap_err(), "Could not attach declarative shadow");

@@ -1,8 +1,13 @@
+pub mod details;
+pub mod slot;
+
 use cssparser::ParserInput;
+use details::DetailsElement;
 use linebender_resource_handle::Blob;
 use markup5ever::{LocalName, QualName, local_name};
 use parley::{ContentWidths, FontContext, LayoutContext};
 use selectors::matching::QuirksMode;
+use slot::SlotElement;
 use std::str::FromStr;
 use std::sync::Arc;
 use style::Atom;
@@ -99,6 +104,10 @@ pub enum SpecialElementData {
     TextInput(TextInputData),
     /// Checkbox checked state
     CheckboxInput(bool),
+    /// A \<slot\> element's assigned nodes
+    Slot(SlotElement),
+    /// A \<details\> element's shadow tree
+    Details(DetailsElement),
     /// Selected files
     #[cfg(feature = "file_input")]
     FileInput(FileData),
@@ -117,6 +126,8 @@ impl Clone for SpecialElementData {
             Self::TableRoot(data) => Self::TableRoot(data.clone()),
             Self::TextInput(data) => Self::TextInput(data.clone()),
             Self::CheckboxInput(data) => Self::CheckboxInput(*data),
+            Self::Slot(data) => Self::Slot(data.clone()),
+            Self::Details(data) => Self::Details(data.clone()),
             #[cfg(feature = "file_input")]
             Self::FileInput(data) => Self::FileInput(data.clone()),
             Self::None => Self::None,
@@ -138,6 +149,11 @@ impl ElementData {
             .map(|attr| attr.value.as_ref())
             .map(|value: &str| Atom::from(value));
 
+        let special_data = match name.local {
+            local_name!("slot") => SpecialElementData::Slot(SlotElement::new()),
+            _ => SpecialElementData::None,
+        };
+
         let mut data = ElementData {
             name,
             id: id_attr_atom,
@@ -146,7 +162,7 @@ impl ElementData {
             style_attribute: Default::default(),
             inline_layout_data: None,
             list_item_data: None,
-            special_data: SpecialElementData::None,
+            special_data,
             template_contents: None,
             background_images: Vec::new(),
             shadow_root: None,
@@ -275,6 +291,34 @@ impl ElementData {
     pub fn file_data_mut(&mut self) -> Option<&mut FileData> {
         match &mut self.special_data {
             SpecialElementData::FileInput(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn slot_data(&self) -> Option<&SlotElement> {
+        match self.special_data {
+            SpecialElementData::Slot(ref data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn slot_data_mut(&mut self) -> Option<&mut SlotElement> {
+        match self.special_data {
+            SpecialElementData::Slot(ref mut data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn details_data(&self) -> Option<&DetailsElement> {
+        match self.special_data {
+            SpecialElementData::Details(ref data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn details_data_mut(&mut self) -> Option<&mut DetailsElement> {
+        match self.special_data {
+            SpecialElementData::Details(ref mut data) => Some(data),
             _ => None,
         }
     }
@@ -548,6 +592,8 @@ impl std::fmt::Debug for SpecialElementData {
             SpecialElementData::TableRoot(_) => f.write_str("NodeSpecificData::TableRoot"),
             SpecialElementData::TextInput(_) => f.write_str("NodeSpecificData::TextInput"),
             SpecialElementData::CheckboxInput(_) => f.write_str("NodeSpecificData::CheckboxInput"),
+            SpecialElementData::Slot(_) => f.write_str("NodeSpecificData::Slot"),
+            SpecialElementData::Details(_) => f.write_str("NodeSpecificData::Details"),
             #[cfg(feature = "file_input")]
             SpecialElementData::FileInput(_) => f.write_str("NodeSpecificData::FileInput"),
             SpecialElementData::None => f.write_str("NodeSpecificData::None"),

@@ -254,7 +254,9 @@ impl<'a> TNode for BlitzNode<'a> {
     // TODO: when implementing slots don't forget this.
     fn traversal_parent(&self) -> Option<Self::ConcreteElement> {
         self.parent_node().and_then(|node| {
-            if let Some(shadow_node) = node.shadow_root_data() {
+            if let Some(assigned_slot) = node.assigned_slot {
+                self.with(assigned_slot).as_element()
+            } else if let Some(shadow_node) = node.shadow_root_data() {
                 self.with(shadow_node.host).as_element()
             } else {
                 node.as_element()
@@ -653,9 +655,16 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
+        let slottables = self
+            .element_data()
+            .and_then(|data| data.slot_data())
+            .map(|s| s.assigned_nodes.as_slice())
+            .filter(|s| !s.is_empty());
+
         if let Some(shadow_root_id) = self.element_data().and_then(|data| data.shadow_root) {
             return LayoutIterator(Traverser {
                 parent: self.with(shadow_root_id),
+                slottables,
                 child_index: 0,
             });
         }
@@ -663,6 +672,7 @@ impl<'a> TElement for BlitzNode<'a> {
         LayoutIterator(Traverser {
             // dom: self.tree(),
             parent: self,
+            slottables,
             child_index: 0,
         })
     }
@@ -1109,6 +1119,7 @@ impl<'a> TElement for BlitzNode<'a> {
 pub struct Traverser<'a> {
     // dom: &'a Slab<Node>,
     parent: BlitzNode<'a>,
+    slottables: Option<&'a [usize]>,
     child_index: usize,
 }
 
@@ -1116,7 +1127,11 @@ impl<'a> Iterator for Traverser<'a> {
     type Item = BlitzNode<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let node_id = self.parent.children.get(self.child_index)?;
+        let node_id = if let Some(slottables) = self.slottables {
+            slottables.get(self.child_index)?
+        } else {
+            self.parent.children.get(self.child_index)?
+        };
         let node = self.parent.with(*node_id);
 
         self.child_index += 1;
