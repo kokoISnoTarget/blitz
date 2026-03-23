@@ -3,6 +3,7 @@
 mod attributes;
 mod element;
 mod node;
+mod shadow_tree;
 mod stylo_data;
 
 pub use attributes::{Attribute, Attributes};
@@ -12,3 +13,4 @@ pub use element::{
     Status, TextBrush, TextInputData, TextLayout,
 };
 pub use node::*;
+pub use shadow_tree::*;

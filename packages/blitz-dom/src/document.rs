@@ -6,7 +6,10 @@ use crate::mutator::ViewportMut;
 use crate::net::{
     Resource, ResourceHandler, ResourceLoadResponse, StylesheetHandler, StylesheetLoader,
 };
-use crate::node::{ImageData, NodeFlags, RasterImageData, SpecialElementData, Status, TextBrush};
+use crate::node::{
+    GlobalOpaqueElementMap, ImageData, NodeFlags, RasterImageData, SpecialElementData, Status,
+    TextBrush,
+};
 use crate::selection::TextSelection;
 use crate::stylo_to_cursor_icon::stylo_to_cursor_icon;
 use crate::traversal::TreeTraverser;
@@ -351,6 +354,9 @@ impl BaseDocument {
         let stylist = Stylist::new(device, QuirksMode::NoQuirks);
         let snapshots = SnapshotMap::new();
         let nodes = Box::new(Slab::new());
+
+        GlobalOpaqueElementMap::insert(id, nodes.as_ref() as *const _);
+
         let guard = SharedRwLock::new();
         let nodes_to_id = HashMap::new();
 
@@ -649,7 +655,8 @@ impl BaseDocument {
 
         let entry = self.nodes.vacant_entry();
         let id = entry.key();
-        entry.insert(Node::new(slab_ptr, id, guard, node_data));
+        let doc_id = self.id;
+        entry.insert(Node::new(slab_ptr, doc_id, id, guard, node_data));
 
         // Mark the new node as changed.
         self.changed_nodes.insert(id);
@@ -1833,6 +1840,12 @@ impl BaseDocument {
         }
 
         ranges
+    }
+}
+
+impl Drop for BaseDocument {
+    fn drop(&mut self) {
+        GlobalOpaqueElementMap::remove(self.id);
     }
 }
 

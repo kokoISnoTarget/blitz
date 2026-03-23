@@ -7,6 +7,7 @@ use std::sync::atomic::Ordering;
 use crate::layout::damage::compute_layout_damage;
 use crate::node::Node;
 use crate::node::NodeData;
+use crate::node::OpaqueElementId;
 use markup5ever::{LocalName, LocalNameStaticSet, Namespace, NamespaceStaticSet, local_name};
 use selectors::bloom::BLOOM_HASH_MASK;
 use selectors::{
@@ -292,15 +293,7 @@ impl selectors::Element for BlitzNode<'_> {
     type Impl = SelectorImpl;
 
     fn opaque(&self) -> selectors::OpaqueElement {
-        // This correctly uses a unique id for the OpaqueElement (unlike using a pointer to the "slot")
-        // However, it makes it impossible for us to "rehydrate" the OpaqueElement back into an actual Element
-        // which is required to implement the `implicit_scope_for_sheet_in_shadow_root` method below
-        //
-        // We should see if selectors will accept a PR that allows us to use 128bits for the OpaqueElement. Or
-        // find some other solution that will enable "rehydration". This is required to enable and use the
-        // Shadow DOM functionality in Stylo.
-        let non_null = NonNull::new((self.id + 1) as *mut ()).unwrap();
-        OpaqueElement::from_non_null_ptr(non_null)
+        OpaqueElementId::from_node(self).to_opaque_element()
     }
 
     fn parent_element(&self) -> Option<Self> {
@@ -583,14 +576,15 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn implicit_scope_for_sheet_in_shadow_root(
-        _opaque_host: OpaqueElement,
+        opaque_host: OpaqueElement,
         _sheet_index: usize,
     ) -> Option<ImplicitScopeRoot> {
-        // We cannot currently implement this as we are using the NodeId as the OpaqueElement,
-        // and need a reference to the Slab to convert it back into an Element
-        //
-        // Luckily it is only needed for shadow dom.
-        todo!();
+        let opaque_element_id = OpaqueElementId::from_opaque_element(opaque_host);
+        let node = opaque_element_id.to_node();
+        let Some(node) = node else {
+            return None;
+        };
+        todo!()
     }
 
     fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
