@@ -676,6 +676,9 @@ impl<'doc> DocumentMutator<'doc> {
                 SpecialElementData::TableRoot(_) => {}
                 SpecialElementData::TextInput(_) => {}
                 SpecialElementData::CheckboxInput(_) => {}
+                SpecialElementData::Slot(_) => {
+                    todo!()
+                }
                 #[cfg(feature = "file_input")]
                 SpecialElementData::FileInput(_) => {}
                 SpecialElementData::None => {}

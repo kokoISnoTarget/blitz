@@ -65,6 +65,8 @@ pub struct ElementData {
     pub template_contents: Option<usize>,
     // /// Whether the node is a [HTML integration point] (https://html.spec.whatwg.org/multipage/#html-integration-point)
     // pub mathml_annotation_xml_integration_point: bool,
+    /// Shadow root
+    pub shadow_root: Option<usize>,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -98,6 +100,8 @@ pub enum SpecialElementData {
     TextInput(TextInputData),
     /// Checkbox checked state
     CheckboxInput(bool),
+    /// A slot element's assigned nodes
+    Slot(SlotData),
     /// Selected files
     #[cfg(feature = "file_input")]
     FileInput(FileData),
@@ -116,6 +120,7 @@ impl Clone for SpecialElementData {
             Self::TableRoot(data) => Self::TableRoot(data.clone()),
             Self::TextInput(data) => Self::TextInput(data.clone()),
             Self::CheckboxInput(data) => Self::CheckboxInput(*data),
+            Self::Slot(data) => Self::Slot(data.clone()),
             #[cfg(feature = "file_input")]
             Self::FileInput(data) => Self::FileInput(data.clone()),
             Self::None => Self::None,
@@ -148,6 +153,7 @@ impl ElementData {
             special_data: SpecialElementData::None,
             template_contents: None,
             background_images: Vec::new(),
+            shadow_root: None,
         };
         data.flush_is_focussable();
         data
@@ -257,6 +263,20 @@ impl ElementData {
     pub fn checkbox_input_checked_mut(&mut self) -> Option<&mut bool> {
         match self.special_data {
             SpecialElementData::CheckboxInput(ref mut checked) => Some(checked),
+            _ => None,
+        }
+    }
+
+    pub fn slot_data(&self) -> Option<&SlotData> {
+        match &self.special_data {
+            SpecialElementData::Slot(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn slot_data_mut(&mut self) -> Option<&mut SlotData> {
+        match &mut self.special_data {
+            SpecialElementData::Slot(data) => Some(data),
             _ => None,
         }
     }
@@ -531,6 +551,11 @@ pub struct CanvasData {
     pub custom_paint_source_id: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct SlotData {
+    pub assigned_nodes: Vec<usize>,
+}
+
 impl std::fmt::Debug for SpecialElementData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -546,6 +571,7 @@ impl std::fmt::Debug for SpecialElementData {
             SpecialElementData::TableRoot(_) => f.write_str("NodeSpecificData::TableRoot"),
             SpecialElementData::TextInput(_) => f.write_str("NodeSpecificData::TextInput"),
             SpecialElementData::CheckboxInput(_) => f.write_str("NodeSpecificData::CheckboxInput"),
+            SpecialElementData::Slot(_) => f.write_str("NodeSpecificData::Slot"),
             #[cfg(feature = "file_input")]
             SpecialElementData::FileInput(_) => f.write_str("NodeSpecificData::FileInput"),
             SpecialElementData::None => f.write_str("NodeSpecificData::None"),

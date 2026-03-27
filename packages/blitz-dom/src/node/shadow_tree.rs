@@ -84,3 +84,34 @@ impl GlobalOpaqueElementMap {
         unsafe { (&*doc).get(node_id) }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NodeSlottableData {
+    pub name: String,
+    pub assigned_slot: Option<usize>,
+    pub manual_slot_assignment: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShadowRootData {
+    pub host: usize,
+    pub mode: ShadowRootMode,
+    pub slot_assignment: SlotAssignment,
+}
+impl ShadowRootData {
+    pub(crate) fn style_data(&self) -> &style::stylist::CascadeData {
+        todo!()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShadowRootMode {
+    Open,
+    Closed,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SlotAssignment {
+    Manual,
+    Named,
+}

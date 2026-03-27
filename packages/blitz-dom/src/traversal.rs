@@ -42,32 +42,51 @@ macro_rules! iter_children_and_pseudos {
 }
 pub(crate) use iter_children_and_pseudos;
 
+pub(crate) trait NodeTree {
+    fn get_node(&self, id: usize) -> Option<&Node>;
+}
+impl NodeTree for BaseDocument {
+    fn get_node(&self, id: usize) -> Option<&Node> {
+        self.get_node(id)
+    }
+}
+impl NodeTree for slab::Slab<Node> {
+    fn get_node(&self, id: usize) -> Option<&Node> {
+        self.get(id)
+    }
+}
+impl NodeTree for Node {
+    fn get_node(&self, id: usize) -> Option<&Node> {
+        Some(self.with(id))
+    }
+}
+
 #[derive(Clone)]
 /// An pre-order tree traverser for a [BaseDocument](crate::document::BaseDocument).
-pub struct TreeTraverser<'a> {
-    doc: &'a BaseDocument,
+pub struct TreeTraverser<'a, T> {
+    node_tree: &'a T,
     stack: Vec<usize>,
 }
 
-impl<'a> TreeTraverser<'a> {
+impl<'a, T: NodeTree> TreeTraverser<'a, T> {
     /// Creates a new tree traverser for the given document which starts at the root node.
-    pub fn new(doc: &'a BaseDocument) -> Self {
-        Self::new_with_root(doc, 0)
+    pub fn new(node_tree: &'a T) -> Self {
+        Self::new_with_root(node_tree, 0)
     }
 
     /// Creates a new tree traverser for the given document which starts at the specified node.
-    pub fn new_with_root(doc: &'a BaseDocument, root: usize) -> Self {
+    pub fn new_with_root(node_tree: &'a T, root: usize) -> Self {
         let mut stack = Vec::with_capacity(32);
         stack.push(root);
-        TreeTraverser { doc, stack }
+        TreeTraverser { node_tree, stack }
     }
 }
-impl Iterator for TreeTraverser<'_> {
+impl<'a, T: NodeTree> Iterator for TreeTraverser<'a, T> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
         let id = self.stack.pop()?;
-        let node = self.doc.get_node(id)?;
+        let node = self.node_tree.get_node(id)?;
         self.stack.extend(node.children.iter().rev());
         Some(id)
     }
@@ -75,24 +94,24 @@ impl Iterator for TreeTraverser<'_> {
 
 #[derive(Clone)]
 /// An ancestor traverser for a [BaseDocument](crate::document::BaseDocument).
-pub struct AncestorTraverser<'a> {
-    doc: &'a BaseDocument,
+pub struct AncestorTraverser<'a, T> {
+    node_tree: &'a T,
     current: usize,
 }
-impl<'a> AncestorTraverser<'a> {
+impl<'a, T: NodeTree> AncestorTraverser<'a, T> {
     /// Creates a new ancestor traverser for the given document and node ID.
-    pub fn new(doc: &'a BaseDocument, node_id: usize) -> Self {
+    pub fn new(node_tree: &'a T, node_id: usize) -> Self {
         AncestorTraverser {
-            doc,
+            node_tree,
             current: node_id,
         }
     }
 }
-impl Iterator for AncestorTraverser<'_> {
+impl<'a, T: NodeTree> Iterator for AncestorTraverser<'a, T> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let current_node = self.doc.get_node(self.current)?;
+        let current_node = self.node_tree.get_node(self.current)?;
         self.current = current_node.parent?;
         Some(self.current)
     }

@@ -1,13 +1,14 @@
 //! Enable the dom to participate in styling by servo
 //!
 
-use std::ptr::NonNull;
 use std::sync::atomic::Ordering;
 
 use crate::layout::damage::compute_layout_damage;
 use crate::node::Node;
 use crate::node::NodeData;
 use crate::node::OpaqueElementId;
+use crate::traversal::AncestorTraverser;
+use crate::traversal::NodeTree;
 use markup5ever::{LocalName, LocalNameStaticSet, Namespace, NamespaceStaticSet, local_name};
 use selectors::bloom::BLOOM_HASH_MASK;
 use selectors::{
@@ -201,14 +202,36 @@ impl<'a> TShadowRoot for BlitzNode<'a> {
     }
 
     fn host(&self) -> <Self::ConcreteNode as TNode>::ConcreteElement {
-        todo!("Shadow roots not implemented")
+        self.shadow_root_data()
+            .map(|data| self.with(data.host))
+            .unwrap() // TODO: Use an expect instead
     }
 
     fn style_data<'b>(&self) -> Option<&'b style::stylist::CascadeData>
     where
         Self: 'b,
     {
-        todo!("Shadow roots not implemented")
+        self.shadow_root_data().map(|data| data.style_data())
+    }
+
+    fn elements_with_id<'b>(
+        &self,
+        id: &AtomIdent,
+    ) -> Result<&'b [<Self::ConcreteNode as TNode>::ConcreteElement], ()>
+    where
+        Self: 'b,
+    {
+        Err(()) // TODO
+    }
+    fn parts<'b>(&self) -> &[<Self::ConcreteNode as TNode>::ConcreteElement]
+    where
+        Self: 'b,
+    {
+        &[] // TODO
+    }
+
+    fn implicit_scope_for_sheet(&self, _sheet_index: usize) -> Option<ImplicitScopeRoot> {
+        todo!()
     }
 }
 
@@ -277,8 +300,10 @@ impl<'a> TNode for BlitzNode<'a> {
     }
 
     fn as_shadow_root(&self) -> Option<Self::ConcreteShadowRoot> {
-        // TODO: implement shadow DOM
-        None
+        match self.data {
+            NodeData::ShadowRoot { .. } => Some(self),
+            _ => None,
+        }
     }
 }
 
@@ -301,11 +326,21 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn parent_node_is_shadow_root(&self) -> bool {
-        false
+        self.parent_node()
+            .and_then(|node| node.shadow_root_data())
+            .is_some()
     }
 
     fn containing_shadow_host(&self) -> Option<Self> {
-        None
+        self.containing_shadow()
+            .and_then(|shadow| shadow.shadow_root_data())
+            .map(|data| self.with(data.host))
+    }
+
+    fn assigned_slot(&self) -> Option<Self> {
+        self.slottable
+            .assigned_slot
+            .map(|slot_id| self.with(slot_id))
     }
 
     fn is_pseudo_element(&self) -> bool {
@@ -451,7 +486,7 @@ impl selectors::Element for BlitzNode<'_> {
 
             NonTSPseudoClass::InRange => false,
             NonTSPseudoClass::Modal => false,
-            NonTSPseudoClass::Open => false,
+            NonTSPseudoClass::Open => self.element_state.contains(ElementState::OPEN),
             NonTSPseudoClass::Optional => false,
             NonTSPseudoClass::OutOfRange => false,
             NonTSPseudoClass::PopoverOpen => false,
@@ -499,7 +534,7 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn is_html_slot_element(&self) -> bool {
-        false
+        self.data.is_element_with_tag_name(&local_name!("slot"))
     }
 
     fn has_id(
@@ -550,7 +585,7 @@ impl selectors::Element for BlitzNode<'_> {
     fn is_root(&self) -> bool {
         self.parent_node()
             .and_then(|parent| parent.parent_node())
-            .is_none()
+            .is_none() // TODO: This may need to account for shadow roots
     }
 
     fn has_custom_state(
@@ -569,7 +604,7 @@ impl selectors::Element for BlitzNode<'_> {
 impl<'a> TElement for BlitzNode<'a> {
     type ConcreteNode = BlitzNode<'a>;
 
-    type TraversalChildrenIterator = Traverser<'a>;
+    type TraversalChildrenIterator = Traverser<'a, Node>;
 
     fn as_node(&self) -> Self::ConcreteNode {
         self
@@ -588,9 +623,19 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
+        let data = self.element_data();
+
+        let nodes = if let Some(shadow) = data.and_then(|d| d.shadow_root) {
+            &self.with(shadow).children
+        } else if let Some(slot) = data.and_then(|d| d.slot_data()) {
+            &slot.assigned_nodes
+        } else {
+            &self.children
+        };
+
         LayoutIterator(Traverser {
-            // dom: self.tree(),
-            parent: self,
+            tree: self, // self.tree()
+            nodes,
             child_index: 0,
         })
     }
@@ -768,11 +813,15 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn shadow_root(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
-        None
+        self.element_data()
+            .and_then(|data| data.shadow_root)
+            .map(|id| self.with(id))
     }
 
     fn containing_shadow(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
-        None
+        AncestorTraverser::new(*self, self.id)
+            .map(|id| self.with(id))
+            .find(|node| node.shadow_root_data().is_some())
     }
 
     fn lang_attr(&self) -> Option<style::selector_parser::AttrValue> {
@@ -1009,18 +1058,19 @@ impl<'a> TElement for BlitzNode<'a> {
     // }
 }
 
-pub struct Traverser<'a> {
+pub struct Traverser<'a, T> {
     // dom: &'a Slab<Node>,
-    parent: BlitzNode<'a>,
+    tree: &'a T,
+    nodes: &'a [usize],
     child_index: usize,
 }
 
-impl<'a> Iterator for Traverser<'a> {
+impl<'a, T: NodeTree> Iterator for Traverser<'a, T> {
     type Item = BlitzNode<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let node_id = self.parent.children.get(self.child_index)?;
-        let node = self.parent.with(*node_id);
+        let node_id = self.nodes.get(self.child_index)?;
+        let node = self.tree.get_node(*node_id)?;
 
         self.child_index += 1;
 

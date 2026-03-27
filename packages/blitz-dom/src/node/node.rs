@@ -34,6 +34,7 @@ use taffy::{
 
 use crate::Document;
 use crate::layout::damage::HoistedPaintChildren;
+use crate::node::{NodeSlottableData, ShadowRootData};
 
 use super::stylo_data::StyloData;
 use super::{Attribute, ElementData};
@@ -98,6 +99,8 @@ pub struct Node {
     /// The same as layout_children, but sorted by z-index
     pub paint_children: RefCell<Option<Vec<usize>>>,
     pub stacking_context: Option<Box<HoistedPaintChildren>>,
+
+    pub slottable: NodeSlottableData,
 
     // Flags
     pub flags: NodeFlags,
@@ -170,6 +173,8 @@ impl Node {
             layout_children: RefCell::new(None),
             paint_children: RefCell::new(None),
             stacking_context: None,
+
+            slottable: NodeSlottableData::default(),
 
             flags: NodeFlags::empty(),
             data,
@@ -477,6 +482,7 @@ pub enum NodeKind {
     Element,
     AnonymousBlock,
     Text,
+    ShadowRoot,
     Comment,
 }
 
@@ -494,6 +500,9 @@ pub enum NodeData {
 
     /// A text node.
     Text(TextNodeData),
+
+    /// A shadow root.
+    ShadowRoot(ShadowRootData),
 
     /// A comment.
     Comment,
@@ -550,6 +559,7 @@ impl NodeData {
             NodeData::Element(_) => NodeKind::Element,
             NodeData::AnonymousBlock(_) => NodeKind::AnonymousBlock,
             NodeData::Text(_) => NodeKind::Text,
+            NodeData::ShadowRoot(_) => NodeKind::ShadowRoot,
             NodeData::Comment => NodeKind::Comment,
         }
     }
@@ -693,6 +703,19 @@ impl Node {
         }
     }
 
+    pub fn shadow_root_data(&self) -> Option<&ShadowRootData> {
+        match self.data {
+            NodeData::ShadowRoot(ref data) => Some(data),
+            _ => None,
+        }
+    }
+    pub fn shadow_root_data_mut(&mut self) -> Option<&mut ShadowRootData> {
+        match self.data {
+            NodeData::ShadowRoot(ref mut data) => Some(data),
+            _ => None,
+        }
+    }
+
     pub fn node_debug_str(&self) -> String {
         let mut s = String::new();
 
@@ -714,6 +737,9 @@ impl Node {
                 // &std::str::from_utf8(data.contents.as_bytes().split_at(10).0).unwrap_or("INVALID UTF8")
             ),
             NodeData::AnonymousBlock(_) => write!(s, "AnonymousBlock"),
+            NodeData::ShadowRoot(data) => {
+                write!(s, "ShadowRoot mode = {:?} host = {}", data.mode, data.host)
+            }
             NodeData::Element(data) => {
                 let name = &data.name;
                 let class = self.attr(local_name!("class")).unwrap_or("");
@@ -758,6 +784,7 @@ impl Node {
             NodeData::Text(data) => {
                 writer.push_str(data.content.as_str());
             }
+            NodeData::ShadowRoot(_) => {}
             NodeData::Element(data) => {
                 writer.push('<');
                 writer.push_str(&data.name.local);
