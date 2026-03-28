@@ -6,7 +6,7 @@ use html5ever::tree_builder::TreeBuilderOpts;
 use std::borrow::Cow;
 use std::cell::{Cell, Ref, RefCell, RefMut};
 
-use blitz_dom::node::Attribute;
+use blitz_dom::node::{Attribute, ShadowRootInit};
 use blitz_dom::{DocumentMutator, HtmlParserProvider};
 use html5ever::{
     QualName,
@@ -250,8 +250,14 @@ impl<'m, 'doc> TreeSink for DocumentHtmlParser<'m, 'doc> {
     }
 
     fn get_template_contents(&self, target: &Self::Handle) -> Self::Handle {
-        // TODO: implement templates properly. This should allow to function like regular elements.
-        *target
+        self.mutr()
+            .doc
+            .get_node(*target)
+            .unwrap()
+            .element_data()
+            .unwrap()
+            .template_contents
+            .unwrap()
     }
 
     fn same_node(&self, x: &Self::Handle, y: &Self::Handle) -> bool {
@@ -278,6 +284,35 @@ impl<'m, 'doc> TreeSink for DocumentHtmlParser<'m, 'doc> {
 
     fn clone_subtree(&self, target: &Self::Handle) -> Self::Handle {
         self.mutr().deep_clone_node(*target)
+    }
+
+    fn attach_declarative_shadow(
+        &self,
+        host: &Self::Handle,
+        template: &Self::Handle,
+        attrs: &[xml5ever::Attribute],
+    ) -> bool {
+        let init = ShadowRootInit::from(attrs);
+        let Ok(shadow_root_id) = self.mutr().attach_shadow(*host, init) else {
+            return false;
+        };
+
+        self.mutr()
+            .doc
+            .get_node_mut(*template)
+            .unwrap()
+            .element_data_mut()
+            .unwrap()
+            .template_contents = Some(shadow_root_id);
+        self.mutr()
+            .doc
+            .get_node_mut(shadow_root_id)
+            .unwrap()
+            .shadow_root_data_mut()
+            .unwrap()
+            .declarative = true;
+
+        true
     }
 }
 
