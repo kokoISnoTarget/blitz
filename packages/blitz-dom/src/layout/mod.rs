@@ -465,7 +465,7 @@ impl PrintTree for BaseDocument {
             NodeData::Text { .. } => node.node_debug_str().leak(),
             NodeData::Comment => "COMMENT",
             NodeData::AnonymousBlock(_) => "ANONYMOUS BLOCK",
-            NodeData::ShadowRoot(_) => "SHADOW ROOT",
+            NodeData::DocumentFragment(_) => "SHADOW ROOT",
             NodeData::Element(_) => {
                 let display = match style.display {
                     Display::Flex => match style.flex_direction {

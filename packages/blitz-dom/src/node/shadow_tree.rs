@@ -93,10 +93,14 @@ pub struct NodeSlottableData {
     pub manual_slot_assignment: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DocumentFragmentData {
+    pub host: Option<usize>,
+    pub shadow_root: Option<ShadowRootData>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShadowRootData {
-    pub host: usize,
-
     pub mode: ShadowRootMode,
     pub slot_assignment: SlotAssignment,
     pub cloneable: bool,

@@ -202,8 +202,9 @@ impl<'a> TShadowRoot for BlitzNode<'a> {
     }
 
     fn host(&self) -> <Self::ConcreteNode as TNode>::ConcreteElement {
-        self.shadow_root_data()
-            .map(|data| self.with(data.host))
+        self.document_fragment_data()
+            .and_then(|data| data.host)
+            .map(|host| self.with(host))
             .unwrap() // TODO: Use an expect instead
     }
 
@@ -301,7 +302,7 @@ impl<'a> TNode for BlitzNode<'a> {
 
     fn as_shadow_root(&self) -> Option<Self::ConcreteShadowRoot> {
         match self.data {
-            NodeData::ShadowRoot { .. } => Some(self),
+            NodeData::DocumentFragment { .. } => Some(self),
             _ => None,
         }
     }
@@ -333,8 +334,9 @@ impl selectors::Element for BlitzNode<'_> {
 
     fn containing_shadow_host(&self) -> Option<Self> {
         self.containing_shadow()
-            .and_then(|shadow| shadow.shadow_root_data())
-            .map(|data| self.with(data.host))
+            .and_then(|shadow| shadow.document_fragment_data())
+            .and_then(|data| data.host)
+            .map(|host| self.with(host))
     }
 
     fn assigned_slot(&self) -> Option<Self> {

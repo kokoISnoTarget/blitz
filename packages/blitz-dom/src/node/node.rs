@@ -34,7 +34,7 @@ use taffy::{
 
 use crate::Document;
 use crate::layout::damage::HoistedPaintChildren;
-use crate::node::{NodeSlottableData, ShadowRootData};
+use crate::node::{DocumentFragmentData, NodeSlottableData, ShadowRootData};
 
 use super::stylo_data::StyloData;
 use super::{Attribute, ElementData};
@@ -482,7 +482,7 @@ pub enum NodeKind {
     Element,
     AnonymousBlock,
     Text,
-    ShadowRoot,
+    DocumentFragment,
     Comment,
 }
 
@@ -501,8 +501,8 @@ pub enum NodeData {
     /// A text node.
     Text(TextNodeData),
 
-    /// A shadow root.
-    ShadowRoot(ShadowRootData),
+    /// A document fragment (which could be a shadow root).
+    DocumentFragment(DocumentFragmentData),
 
     /// A comment.
     Comment,
@@ -559,7 +559,7 @@ impl NodeData {
             NodeData::Element(_) => NodeKind::Element,
             NodeData::AnonymousBlock(_) => NodeKind::AnonymousBlock,
             NodeData::Text(_) => NodeKind::Text,
-            NodeData::ShadowRoot(_) => NodeKind::ShadowRoot,
+            NodeData::DocumentFragment(_) => NodeKind::DocumentFragment,
             NodeData::Comment => NodeKind::Comment,
         }
     }
@@ -703,17 +703,23 @@ impl Node {
         }
     }
 
-    pub fn shadow_root_data(&self) -> Option<&ShadowRootData> {
+    pub fn document_fragment_data(&self) -> Option<&DocumentFragmentData> {
         match self.data {
-            NodeData::ShadowRoot(ref data) => Some(data),
+            NodeData::DocumentFragment(ref data) => Some(data),
             _ => None,
         }
     }
-    pub fn shadow_root_data_mut(&mut self) -> Option<&mut ShadowRootData> {
+    pub fn document_fragment_data_mut(&mut self) -> Option<&mut DocumentFragmentData> {
         match self.data {
-            NodeData::ShadowRoot(ref mut data) => Some(data),
+            NodeData::DocumentFragment(ref mut data) => Some(data),
             _ => None,
         }
+    }
+    pub fn shadow_root_data(&self) -> Option<&ShadowRootData> {
+        self.document_fragment_data().and_then(|data| data.shadow_root.as_ref())
+    }
+    pub fn shadow_root_data_mut(&mut self) -> Option<&mut ShadowRootData> {
+        self.document_fragment_data_mut().and_then(|data| data.shadow_root.as_mut())
     }
 
     pub fn node_debug_str(&self) -> String {
@@ -737,8 +743,12 @@ impl Node {
                 // &std::str::from_utf8(data.contents.as_bytes().split_at(10).0).unwrap_or("INVALID UTF8")
             ),
             NodeData::AnonymousBlock(_) => write!(s, "AnonymousBlock"),
-            NodeData::ShadowRoot(data) => {
-                write!(s, "ShadowRoot mode = {:?} host = {}", data.mode, data.host)
+            NodeData::DocumentFragment(data) => {
+                if let Some(shadow_data) = &data.shadow_root {
+                    write!(s, "ShadowRoot mode = {:?} host = {:?}", shadow_data.mode, data.host)
+                } else {
+                    write!(s, "DocumentFragment host = {:?}", data.host)
+                }
             }
             NodeData::Element(data) => {
                 let name = &data.name;
@@ -784,7 +794,7 @@ impl Node {
             NodeData::Text(data) => {
                 writer.push_str(data.content.as_str());
             }
-            NodeData::ShadowRoot(_) => {}
+            NodeData::DocumentFragment(_) => {}
             NodeData::Element(data) => {
                 writer.push('<');
                 writer.push_str(&data.name.local);

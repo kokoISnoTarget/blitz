@@ -71,10 +71,13 @@ pub fn walk_tree(indent: usize, node: &Node) {
 
         NodeData::AnonymousBlock(_) => println!("{id} AnonymousBlock"),
 
-        NodeData::ShadowRoot(data) => println!(
-            "{id} #shadow-root mode = {:?} host = {}",
-            data.mode, data.host
-        ),
+        NodeData::DocumentFragment(data) => {
+            if let Some(shadow_data) = &data.shadow_root {
+                println!("{id} #shadow-root mode = {:?} host = {:?}", shadow_data.mode, data.host);
+            } else {
+                println!("{id} #document-fragment host = {:?}", data.host);
+            }
+        },
 
         NodeData::Element(data) => {
             print!("<{} {id}", data.name.local);

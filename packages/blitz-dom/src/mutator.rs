@@ -132,7 +132,7 @@ impl DocumentMutator<'_> {
     }
 
     pub fn create_element(&mut self, name: QualName, attrs: Vec<Attribute>) -> usize {
-        let mut data = ElementData::new(name, attrs);
+        let mut data = ElementData::new(name.clone(), attrs);
         data.flush_style_attribute(self.doc.guard(), &self.doc.url.url_extra_data());
 
         let id = self.doc.create_node(NodeData::Element(data));
@@ -143,6 +143,17 @@ impl DocumentMutator<'_> {
             damage: ALL_DAMAGE,
             ..Default::default()
         };
+
+        if name.local == local_name!("template") {
+            let frag_id = self.doc.create_node(NodeData::DocumentFragment(
+                crate::node::DocumentFragmentData {
+                    host: Some(id),
+                    shadow_root: None,
+                },
+            ));
+            let node = self.doc.get_node_mut(id).unwrap();
+            node.element_data_mut().unwrap().template_contents = Some(frag_id);
+        }
 
         id
     }
@@ -608,15 +619,19 @@ impl DocumentMutator<'_> {
 
         // TODO: If element’s custom element state is "precustomized" or "custom", then set shadow’s available to element internals to true.
         // TODO: Set shadow’s custom element registry to registry.
-        let shadow = self.doc.create_node(NodeData::ShadowRoot(ShadowRootData {
-            host: host_id,
-            mode: init.mode,
-            slot_assignment: init.assignment,
-            delegates_focus: init.delegates_focus,
-            cloneable: init.cloneable,
-            serializable: init.serializable,
-            declarative: false,
-        }));
+        let shadow = self.doc.create_node(NodeData::DocumentFragment(
+            crate::node::DocumentFragmentData {
+                host: Some(host_id),
+                shadow_root: Some(ShadowRootData {
+                    mode: init.mode,
+                    slot_assignment: init.assignment,
+                    delegates_focus: init.delegates_focus,
+                    cloneable: init.cloneable,
+                    serializable: init.serializable,
+                    declarative: false,
+                }),
+            },
+        ));
 
         // Set element’s shadow root to shadow.
         self.doc.nodes[host_id]

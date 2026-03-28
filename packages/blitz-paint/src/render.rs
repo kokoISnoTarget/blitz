@@ -345,7 +345,7 @@ impl<'dom> BlitzDomPainter<'dom> {
                 // (they should always be rendered as part of an inline layout)
                 // unreachable!()
             }
-            NodeData::ShadowRoot(_) => {
+            NodeData::DocumentFragment(_) => {
                 todo!()
             }
             NodeData::Document => {}

@@ -253,11 +253,11 @@ impl<'m, 'doc> TreeSink for DocumentHtmlParser<'m, 'doc> {
         self.mutr()
             .doc
             .get_node(*target)
-            .unwrap()
+            .expect("Node should exists!")
             .element_data()
-            .unwrap()
+            .expect("Node should be an element!")
             .template_contents
-            .unwrap()
+            .expect("Node should be an template element!")
     }
 
     fn same_node(&self, x: &Self::Handle, y: &Self::Handle) -> bool {
