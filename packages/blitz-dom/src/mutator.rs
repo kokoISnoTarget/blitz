@@ -5,13 +5,17 @@ use std::ops::{Deref, DerefMut};
 use crate::document::make_device;
 use crate::layout::damage::ALL_DAMAGE;
 use crate::net::{ImageHandler, ResourceHandler, StylesheetHandler};
-use crate::node::{CanvasData, NodeFlags, SpecialElementData};
+use crate::node::{
+    CanvasData, NodeFlags, ShadowRootData, ShadowRootInit, SpecialElementData,
+    valid_shadow_host_name,
+};
 use crate::util::ImageType;
 use crate::{
     Attribute, BaseDocument, Document, ElementData, Node, NodeData, QualName, local_name, qual_name,
 };
 use blitz_traits::net::Request;
 use blitz_traits::shell::Viewport;
+use markup5ever::ns;
 use style::Atom;
 use style::invalidation::element::restyle_hints::RestyleHint;
 use style::stylesheets::OriginSet;
@@ -524,6 +528,103 @@ impl DocumentMutator<'_> {
     pub fn replace_node_with(&mut self, anchor_node_id: usize, new_node_ids: &[usize]) {
         self.insert_nodes_before(anchor_node_id, new_node_ids);
         self.remove_node(anchor_node_id);
+    }
+
+    /// Attaches a shadow root to the given host element.
+    /// Returns Ok(shadow_root_id) if the operation was successful, Err(()) otherwise.
+    ///
+    /// Note: if the host element already has a shadow root, this will return it, but remove its previous children.
+    pub fn attach_shadow(&mut self, host_id: usize, init: ShadowRootInit) -> Result<usize, ()> {
+        //To attach a shadow root, given an element element, a string mode, a boolean clonable, a boolean serializable, a boolean delegatesFocus, a string slotAssignment, and null or a CustomElementRegistry object registry:
+        let host = &self.doc.nodes[host_id];
+
+        // If element’s namespace is not the HTML namespace, then throw a "NotSupportedError" DOMException.
+        let Some(element_data) = host.element_data() else {
+            #[cfg(feature = "tracing")]
+            tracing::warn!("attach_shadow: host_id {} is not an element", host_id);
+            return Err(());
+        };
+
+        if element_data.name.ns != ns!(html) {
+            #[cfg(feature = "tracing")]
+            tracing::warn!("attach_shadow: host_id {} is not an HTML element", host_id);
+            return Err(());
+        }
+
+        // If element’s local name is not a valid shadow host name, then throw a "NotSupportedError" DOMException.
+        if !valid_shadow_host_name(element_data.name.local.clone()) {
+            #[cfg(feature = "tracing")]
+            tracing::warn!(
+                "attach_shadow: host_id {} has an invalid shadow host name",
+                host_id
+            );
+            return Err(());
+        }
+
+        // TODO: Step 3
+        // If element’s local name is a valid custom element name, or element’s is value is non-null:
+        // Let definition be the result of looking up a custom element definition given element’s custom element registry, its namespace, its local name, and its is value.
+        // If definition is non-null and definition’s disable shadow is true, then throw a "NotSupportedError" DOMException.
+
+        //If element is a shadow host:
+        //   Let currentShadowRoot be element’s shadow root.
+        if let Some(current_shadow_root) = element_data.shadow_root {
+            let current = &self.doc.nodes[current_shadow_root]
+                .shadow_root_data()
+                .unwrap();
+
+            // If any of the following are true:
+            //   currentShadowRoot’s declarative is false; or
+            //   currentShadowRoot’s mode is not mode,
+            // then throw a "NotSupportedError" DOMException.
+            if !current.declarative {
+                #[cfg(feature = "tracing")]
+                tracing::warn!("attach_shadow: tried to override declarative shadow root");
+                return Err(());
+            }
+            if current.mode != init.mode {
+                #[cfg(feature = "tracing")]
+                tracing::warn!("attach_shadow: tried to attach shadow root with mismatching mode");
+                return Err(());
+            }
+            // Otherwise:
+            //    Remove all of currentShadowRoot’s children, in tree order.
+            //    Set currentShadowRoot’s declarative to false.
+            //    Return.
+            self.remove_and_drop_all_children(current_shadow_root);
+            self.doc.nodes[current_shadow_root]
+                .shadow_root_data_mut()
+                .unwrap()
+                .declarative = false;
+            return Ok(current_shadow_root);
+        }
+
+        // Let shadow be a new shadow root whose node document is element’s node document, host is element, and mode is mode.
+        // Set shadow’s delegates focus to delegatesFocus.
+        // Set shadow’s slot assignment to slotAssignment.
+        // Set shadow’s declarative to false.
+        // Set shadow’s clonable to clonable.
+        // Set shadow’s serializable to serializable.
+
+        // TODO: If element’s custom element state is "precustomized" or "custom", then set shadow’s available to element internals to true.
+        // TODO: Set shadow’s custom element registry to registry.
+        let shadow = self.doc.create_node(NodeData::ShadowRoot(ShadowRootData {
+            host: host_id,
+            mode: init.mode,
+            slot_assignment: init.assignment,
+            delegates_focus: init.delegates_focus,
+            cloneable: init.cloneable,
+            serializable: init.serializable,
+            declarative: false,
+        }));
+
+        // Set element’s shadow root to shadow.
+        self.doc.nodes[host_id]
+            .element_data_mut()
+            .unwrap()
+            .shadow_root = Some(shadow);
+
+        Ok(shadow)
     }
 }
 

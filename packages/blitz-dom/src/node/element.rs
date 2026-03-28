@@ -22,9 +22,16 @@ use super::{Attribute, Attributes};
 use crate::Document;
 use crate::layout::table::TableContext;
 
+#[macro_export]
 macro_rules! local_names {
     ($($name:tt),+) => {
         [$(local_name!($name),)+]
+    };
+    ($head:tt, $($tail:tt),+; $sep:tt) => {
+        local_name!($head)
+        $(
+            $sep local_name!($tail)
+        )*
     };
 }
 

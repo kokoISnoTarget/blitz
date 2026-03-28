@@ -1,9 +1,10 @@
 use std::{cell::RefCell, collections::HashMap, ptr::NonNull};
 
+use markup5ever::{Attribute, LocalName, local_name};
 use selectors::OpaqueElement;
 use slab::Slab;
 
-use crate::Node;
+use crate::{Node, local_names};
 
 thread_local! {
     static GLOBAL_OPAQUE_ELEMENT_MAP: RefCell<GlobalOpaqueElementMap> = RefCell::new(GlobalOpaqueElementMap {
@@ -95,8 +96,13 @@ pub struct NodeSlottableData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShadowRootData {
     pub host: usize,
+
     pub mode: ShadowRootMode,
     pub slot_assignment: SlotAssignment,
+    pub cloneable: bool,
+    pub delegates_focus: bool,
+    pub serializable: bool,
+    pub declarative: bool,
 }
 impl ShadowRootData {
     pub(crate) fn style_data(&self) -> &style::stylist::CascadeData {
@@ -104,14 +110,65 @@ impl ShadowRootData {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum ShadowRootMode {
+    #[default]
     Open,
     Closed,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum SlotAssignment {
     Manual,
+    #[default]
     Named,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ShadowRootInit {
+    pub mode: ShadowRootMode,
+    pub assignment: SlotAssignment,
+    pub cloneable: bool,
+    pub delegates_focus: bool,
+    pub serializable: bool,
+}
+impl From<&[Attribute]> for ShadowRootInit {
+    fn from(attrs: &[Attribute]) -> Self {
+        let mut init = Self::default();
+        for Attribute { name, value } in attrs {
+            match name.local {
+                local_name!(shadowrootmode) if value == "closed" => {
+                    init.mode = ShadowRootMode::Closed;
+                }
+                local_name!(shadowrootclonable) => {
+                    init.cloneable = true;
+                }
+                local_name!(shadowrootdelegatesfocus) => {
+                    init.delegates_focus = true;
+                }
+                local_name!(shadowrootserializable) => {
+                    init.serializable = true;
+                }
+                _ => {}
+            }
+        }
+        init
+    }
+}
+
+pub fn valid_shadow_host_name(name: LocalName) -> bool {
+    name.contains('-')
+        || matches!(
+            name,
+            local_names!(
+                "article", "aside",
+                "blockquote", "body",
+                "div", "footer",
+                "h1", "h2",
+                "h3", "h4",
+                "h5", "h6",
+                "header", "main",
+                "nav", "p",
+                "section", "span"; |)
+        )
 }
