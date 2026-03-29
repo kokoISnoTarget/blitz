@@ -270,12 +270,16 @@ impl<'a> TNode for BlitzNode<'a> {
         true
     }
 
-    // I think this is the same as parent_node only in the cases when the direct parent is not a real element, forcing us
-    // to travel upwards
-    //
-    // For the sake of this demo, we're just going to return the parent node ann
     fn traversal_parent(&self) -> Option<Self::ConcreteElement> {
-        self.parent_node().and_then(|node| node.as_element())
+        self.parent_node().and_then(|node| {
+            if let Some(assigned_slot) = node.slottable.assigned_slot {
+                self.with(assigned_slot).as_element()
+            } else if let Some(host) = node.document_fragment_data().and_then(|data| data.host) {
+                self.with(host).as_element()
+            } else {
+                node.as_element()
+            }
+        })
     }
 
     fn opaque(&self) -> OpaqueNode {
