@@ -1,8 +1,15 @@
-use std::{cell::RefCell, collections::HashMap, ptr::NonNull};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fmt::{self, Debug, Formatter},
+    ops::{Deref, DerefMut},
+    ptr::NonNull,
+};
 
 use markup5ever::{Attribute, LocalName, local_name};
 use selectors::OpaqueElement;
 use slab::Slab;
+use style::{author_styles::AuthorStyles, stylesheets::DocumentStyleSheet};
 
 use crate::{Node, local_names};
 
@@ -93,13 +100,13 @@ pub struct NodeSlottableData {
     pub manual_slot_assignment: Option<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct DocumentFragmentData {
     pub host: Option<usize>,
     pub shadow_root: Option<ShadowRootData>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct ShadowRootData {
     pub mode: ShadowRootMode,
     pub slot_assignment: SlotAssignment,
@@ -107,10 +114,43 @@ pub struct ShadowRootData {
     pub delegates_focus: bool,
     pub serializable: bool,
     pub declarative: bool,
+
+    pub styles: StylesWrapper,
 }
+
 impl ShadowRootData {
-    pub(crate) fn style_data(&self) -> &style::stylist::CascadeData {
-        todo!()
+    pub fn style_data(&self) -> &style::stylist::CascadeData {
+        &self.styles.data
+    }
+}
+
+pub struct StylesWrapper(AuthorStyles<DocumentStyleSheet>);
+impl Debug for StylesWrapper {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AuthorStylesWrapper")
+            .finish_non_exhaustive()
+    }
+}
+impl Deref for StylesWrapper {
+    type Target = AuthorStyles<DocumentStyleSheet>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for StylesWrapper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+impl Clone for StylesWrapper {
+    fn clone(&self) -> Self {
+        StylesWrapper(AuthorStyles::new()) // TODO: actually clone
+    }
+}
+impl Default for StylesWrapper {
+    fn default() -> Self {
+        Self(AuthorStyles::new())
     }
 }
 

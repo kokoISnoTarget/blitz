@@ -629,6 +629,8 @@ impl DocumentMutator<'_> {
                     cloneable: init.cloneable,
                     serializable: init.serializable,
                     declarative: false,
+
+                    ..Default::default()
                 }),
             },
         ));
