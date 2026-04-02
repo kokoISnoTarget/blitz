@@ -233,6 +233,35 @@ impl BaseDocument {
         self.nodes[node_id].after = after;
     }
 
+    pub fn iter_shadow_inclusive_subtree_mut(
+        &mut self,
+        node_id: usize,
+        mut cb: impl FnMut(usize, &mut BaseDocument),
+    ) {
+        cb(node_id, self);
+        iter_inner(self, node_id, &mut cb);
+
+        fn iter_inner(
+            doc: &mut BaseDocument,
+            node_id: usize,
+            cb: &mut impl FnMut(usize, &mut BaseDocument),
+        ) {
+            if let Some(shadow_root_id) = doc.nodes[node_id]
+                .element_data()
+                .and_then(|data| data.shadow_root)
+            {
+                cb(shadow_root_id, doc);
+                iter_inner(doc, shadow_root_id, cb);
+            }
+            let children = std::mem::take(&mut doc.nodes[node_id].children);
+            for child_id in children.iter().copied() {
+                cb(child_id, doc);
+                iter_inner(doc, child_id, cb);
+            }
+            doc.nodes[node_id].children = children;
+        }
+    }
+
     pub fn next_node(&self, start: &Node, mut filter: impl FnMut(&Node) -> bool) -> Option<usize> {
         let start_id = start.id;
         let mut node = start;

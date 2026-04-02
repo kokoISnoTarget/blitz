@@ -6,9 +6,11 @@ use crate::document::make_device;
 use crate::layout::damage::ALL_DAMAGE;
 use crate::net::{ImageHandler, ResourceHandler, StylesheetHandler};
 use crate::node::{
-    CanvasData, NodeFlags, ShadowRootData, ShadowRootInit, SpecialElementData,
+    CanvasData, NodeFlags, ShadowRootData, ShadowRootInit, ShadowRootMode, SlotAssignment,
+    SpecialElementData, assign_a_slot_given_slottable, assign_slottables_for_a_tree,
     valid_shadow_host_name,
 };
+use crate::traversal::AncestorTraverser;
 use crate::util::ImageType;
 use crate::{
     Attribute, BaseDocument, Document, ElementData, Node, NodeData, QualName, local_name, qual_name,
@@ -489,10 +491,26 @@ impl DocumentMutator<'_> {
 
         insert_children_fn(new_parent, child_ids);
 
+        let parent_is_named_shadow_root_host = new_parent
+            .element_data()
+            .and_then(|data| data.shadow_root)
+            .and_then(|root_id| self.doc.nodes[root_id].shadow_root_data())
+            .map_or(false, |data| data.slot_assignment == SlotAssignment::Named);
+
+        let parents_root_id = AncestorTraverser::new(self.doc, parent_id)
+            .last()
+            .unwrap_or(parent_id);
+
         for child_id in child_ids.iter().copied() {
             let child = &mut self.doc.nodes[child_id];
             let old_parent_id = child.parent.replace(parent_id);
 
+            if parent_is_named_shadow_root_host && child.is_element() || child.is_text_node() {
+                assign_a_slot_given_slottable(&mut self.doc, child_id)
+            }
+            assign_slottables_for_a_tree(&mut self.doc, parents_root_id);
+
+            let child = &self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
             if new_parent_is_in_doc != child_was_in_doc {
                 self.process_added_subtree(child_id);
@@ -698,51 +716,53 @@ impl<'doc> DocumentMutator<'doc> {
     }
 
     fn process_added_subtree(&mut self, node_id: usize) {
-        self.doc.iter_subtree_mut(node_id, |node_id, doc| {
-            let node = &mut doc.nodes[node_id];
-            node.flags.set(NodeFlags::IS_IN_DOCUMENT, true);
-            node.insert_damage(ALL_DAMAGE);
+        self.doc
+            .iter_shadow_inclusive_subtree_mut(node_id, |node_id, doc| {
+                let node = &mut doc.nodes[node_id];
+                node.flags.set(NodeFlags::IS_IN_DOCUMENT, true);
+                node.insert_damage(ALL_DAMAGE);
 
-            // If the node has an "id" attribute, store it in the ID map.
-            if let Some(id_attr) = node.attr(local_name!("id")) {
-                doc.nodes_to_id.insert(id_attr.to_string(), node_id);
-            }
-
-            let NodeData::Element(ref mut element) = node.data else {
-                return;
-            };
-
-            // Custom post-processing by element tag name
-            let tag = element.name.local.as_ref();
-            match tag {
-                "title" => self.title_node = Some(node_id),
-                "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
-                "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
-                "canvas" => self
-                    .eager_op_queue
-                    .push(SpecialOp::LoadCustomPaintSource(node_id)),
-                "style" => {
-                    self.style_nodes.insert(node_id);
+                // If the node has an "id" attribute, store it in the ID map.
+                if let Some(id_attr) = node.attr(local_name!("id")) {
+                    doc.nodes_to_id.insert(id_attr.to_string(), node_id);
                 }
-                "button" | "fieldset" | "input" | "select" | "textarea" | "object" | "output" => {
-                    self.eager_op_queue
-                        .push(SpecialOp::ProcessButtonInput(node_id));
-                    self.form_nodes.insert(node_id);
-                }
-                _ => {}
-            }
 
-            #[cfg(feature = "autofocus")]
-            if node.is_focussable() {
-                if let NodeData::Element(ref element) = node.data {
-                    if let Some(value) = element.attr(local_name!("autofocus")) {
-                        if value == "true" {
-                            self.node_to_autofocus = Some(node_id);
+                let NodeData::Element(ref mut element) = node.data else {
+                    return;
+                };
+
+                // Custom post-processing by element tag name
+                let tag = element.name.local.as_ref();
+                match tag {
+                    "title" => self.title_node = Some(node_id),
+                    "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
+                    "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
+                    "canvas" => self
+                        .eager_op_queue
+                        .push(SpecialOp::LoadCustomPaintSource(node_id)),
+                    "style" => {
+                        self.style_nodes.insert(node_id);
+                    }
+                    "button" | "fieldset" | "input" | "select" | "textarea" | "object"
+                    | "output" => {
+                        self.eager_op_queue
+                            .push(SpecialOp::ProcessButtonInput(node_id));
+                        self.form_nodes.insert(node_id);
+                    }
+                    _ => {}
+                }
+
+                #[cfg(feature = "autofocus")]
+                if node.is_focussable() {
+                    if let NodeData::Element(ref element) = node.data {
+                        if let Some(value) = element.attr(local_name!("autofocus")) {
+                            if value == "true" {
+                                self.node_to_autofocus = Some(node_id);
+                            }
                         }
                     }
                 }
-            }
-        });
+            });
 
         self.flush_eager_ops();
     }
