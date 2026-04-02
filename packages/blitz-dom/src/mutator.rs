@@ -6,9 +6,8 @@ use crate::document::make_device;
 use crate::layout::damage::ALL_DAMAGE;
 use crate::net::{ImageHandler, ResourceHandler, StylesheetHandler};
 use crate::node::{
-    CanvasData, NodeFlags, ShadowRootData, ShadowRootInit, ShadowRootMode, SlotAssignment,
-    SpecialElementData, assign_a_slot_given_slottable, assign_slottables_for_a_tree,
-    valid_shadow_host_name,
+    CanvasData, NodeFlags, ShadowRootData, ShadowRootInit, SlotAssignment, SpecialElementData,
+    assign_a_slot_given_slottable, assign_slottables_for_a_tree, valid_shadow_host_name,
 };
 use crate::traversal::AncestorTraverser;
 use crate::util::ImageType;

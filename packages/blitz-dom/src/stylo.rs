@@ -231,8 +231,9 @@ impl<'a> TShadowRoot for BlitzNode<'a> {
         &[] // TODO
     }
 
-    fn implicit_scope_for_sheet(&self, _sheet_index: usize) -> Option<ImplicitScopeRoot> {
-        todo!()
+    fn implicit_scope_for_sheet(&self, sheet_index: usize) -> Option<ImplicitScopeRoot> {
+        self.shadow_root_data()?
+            .implicit_scope_for_sheet(sheet_index)
     }
 }
 
@@ -618,14 +619,11 @@ impl<'a> TElement for BlitzNode<'a> {
 
     fn implicit_scope_for_sheet_in_shadow_root(
         opaque_host: OpaqueElement,
-        _sheet_index: usize,
+        sheet_index: usize,
     ) -> Option<ImplicitScopeRoot> {
-        let opaque_element_id = OpaqueElementId::from_opaque_element(opaque_host);
-        let node = opaque_element_id.to_node();
-        let Some(node) = node else {
-            return None;
-        };
-        todo!()
+        OpaqueElementId::from_opaque_element(opaque_host)
+            .to_node()?
+            .implicit_scope_for_sheet(sheet_index)
     }
 
     fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {

@@ -9,7 +9,10 @@ use std::{
 use markup5ever::{Attribute, LocalName, local_name};
 use selectors::OpaqueElement;
 use slab::Slab;
-use style::{author_styles::AuthorStyles, stylesheets::DocumentStyleSheet};
+use style::{
+    author_styles::AuthorStyles,
+    stylesheets::{DocumentStyleSheet, StylesheetInDocument, scope_rule::ImplicitScopeRoot},
+};
 
 use crate::BaseDocument;
 use crate::traversal::TreeTraverser;
@@ -123,6 +126,12 @@ pub struct ShadowRootData {
 impl ShadowRootData {
     pub fn style_data(&self) -> &style::stylist::CascadeData {
         &self.styles.data
+    }
+    pub fn implicit_scope_for_sheet(&self, sheet_index: usize) -> Option<ImplicitScopeRoot> {
+        self.styles
+            .stylesheets
+            .get(sheet_index)?
+            .implicit_scope_root()
     }
 }
 
